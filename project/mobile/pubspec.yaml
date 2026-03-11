@@ -1,0 +1,41 @@
+name: healthsaathi
+description: A mobile-based secure healthcare management system
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  
+  # HTTP client for API calls
+  http: ^1.1.0
+  
+  # State management
+  provider: ^6.1.1
+  
+  # WebSocket support
+  web_socket_channel: ^2.4.0
+  
+  # Local storage for JWT tokens
+  shared_preferences: ^2.2.2
+  
+  # Date formatting
+  intl: ^0.18.1
+  
+  # UI components
+  cupertino_icons: ^1.0.6
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  integration_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+  mockito: ^5.4.4
+  build_runner: ^2.4.7
+
+flutter:
+  uses-material-design: true
