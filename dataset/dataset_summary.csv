@@ -1,0 +1,12 @@
+Original File,Renamed File,Rows,Columns,Purpose,Status
+patients.csv,main_dataset/01_patients.csv,106,28,Patient profiles and demographic information,Main
+encounters.csv,main_dataset/02_appointments_encounters.csv,4930,15,"Patient visits, encounters, and appointment history",Main
+conditions.csv,main_dataset/03_diagnoses_conditions.csv,3506,7,Diagnosis and disease history,Main
+medications.csv,main_dataset/04_prescriptions_medications.csv,3579,13,Medication and prescription records,Main
+observations.csv,main_dataset/05_vitals_observations.csv,63427,9,"Vitals, lab values, and clinical observations",Main
+allergies.csv,main_dataset/06_allergies.csv,91,15,Patient allergy records,Main
+procedures.csv,main_dataset/07_procedures.csv,14285,10,Medical procedures performed on patients,Main
+organizations.csv,main_dataset/08_organizations.csv,257,11,Hospital or clinic organization details,Main
+immunizations.csv,optional_dataset/09_optional_immunizations.csv,1543,6,Optional vaccination/immunization records,Optional
+claims.csv,optional_dataset/10_optional_claims.csv,8509,31,Optional billing/insurance claim records,Optional
+Generated,main_dataset/09_audit_logs_synthetic.csv,5000,17,Synthetic hospital access logs for anomaly detection,Main
