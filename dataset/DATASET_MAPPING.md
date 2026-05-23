@@ -13,7 +13,3 @@
 | 09_audit_logs_synthetic.csv | Generated | Anomaly Detection | Yes | Real access logs are not public, so synthetic logs are used |
 | 09_optional_immunizations.csv | immunizations.csv | Vaccination History | Optional | Add only if vaccination module is included |
 | 10_optional_claims.csv | claims.csv | Billing / Insurance | Optional | Add only if billing/claims module is included |
-
-## One-line explanation for teacher
-
-Immunizations and claims are included as optional datasets because vaccination history and billing/insurance workflows are useful future extensions, but they are not required for the core HealthSaathi modules such as patient management, appointments, prescriptions, medical records, and anomaly detection.
