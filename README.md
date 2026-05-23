@@ -1,84 +1,670 @@
-# HealthSaathi – AI-Powered Healthcare Management System
+# HealthSaathi
 
-HealthSaathi is a capstone healthcare project designed to manage patient records, appointments, diagnoses, prescriptions, vitals, allergies, procedures, organizations, and audit logs. The project uses structured healthcare datasets to support patient management, clinical record tracking, and synthetic audit-log based anomaly detection.
+A mobile-based secure healthcare management system for clinics and hospitals. HealthSaathi provides role-based access for patients, doctors, nurses, and administrators, with appointment booking, real-time queue management, medical record handling, audit logging, and blockchain-style integrity verification for sensitive healthcare records.
+
+> **Repository status:** This repository contains the backend API, PostgreSQL database schema, deployment files, Flutter mobile project scaffold, project documentation, and research/proposal documents.
+
+---
+
+## Table of Contents
+
+- [Project Overview](#project-overview)
+- [Key Features](#key-features)
+- [Technology Stack](#technology-stack)
+- [Repository Structure](#repository-structure)
+- [Core System Modules](#core-system-modules)
+- [Documentation Map](#documentation-map)
+- [Prerequisites](#prerequisites)
+- [Local Setup](#local-setup)
+- [Backend API](#backend-api)
+- [Database Setup](#database-setup)
+- [Mobile App](#mobile-app)
+- [Deployment](#deployment)
+- [Test Credentials](#test-credentials)
+- [Environment Variables](#environment-variables)
+- [Research and Proposal Documents](#research-and-proposal-documents)
+- [Future Scope](#future-scope)
+- [License](#license)
+
+---
 
 ## Project Overview
 
-The goal of HealthSaathi is to build a healthcare management system that can store, organize, and analyze patient-related medical data in a structured way. The system is designed around multiple CSV datasets mapped from healthcare data sources such as Synthea, along with additional synthetic data for audit-log analysis.
+HealthSaathi is designed to solve common clinic and hospital workflow problems such as:
 
-This project can be used for:
+- Manual appointment handling
+- Long and unclear patient queues
+- Fragmented patient records
+- Limited auditability of medical data changes
+- Weak role-based access separation
+- Lack of real-time queue visibility for patients and staff
 
-- Patient profile management
-- Appointment and encounter tracking
-- Diagnosis and condition history
-- Prescription and medication records
-- Vitals and clinical observations
-- Allergy and procedure tracking
-- Healthcare organization management
-- Audit-log analysis and anomaly detection
+The system uses a **FastAPI backend**, **PostgreSQL database**, and **Flutter mobile app scaffold** to support healthcare workflows across four user roles:
 
-## Dataset Files
-
-The project uses the following main dataset files:
-
-| File Name | Purpose |
+| Role | Main Responsibilities |
 |---|---|
-| `01_patients.csv` | Stores patient demographic and basic healthcare profile information |
-| `02_appointments_encounters.csv` | Stores appointment, visit, and OPD encounter history |
-| `03_diagnoses_conditions.csv` | Stores diagnosis and medical condition history |
-| `04_prescriptions_medications.csv` | Stores prescription and medicine records |
-| `05_vitals_observations.csv` | Stores vitals, lab values, and clinical observations |
-| `06_allergies.csv` | Stores patient allergy records |
-| `07_procedures.csv` | Stores medical procedures performed during treatment |
-| `08_organizations.csv` | Stores clinic, hospital, and healthcare organization details |
-| `09_audit_logs_synthetic.csv` | Stores synthetic access logs for anomaly detection |
+| Patient | Register/login, book appointments, view queue status, access medical history |
+| Doctor | Manage consultation queue, create medical records, add diagnosis and prescriptions |
+| Nurse | Register walk-in patients, check in patients, assist with queue management |
+| Admin | Manage users, monitor audit logs, verify record integrity, oversee the system |
 
-## Features
+---
 
-- Structured healthcare database design
-- Patient-centric record management
-- Appointment and encounter history tracking
-- Diagnosis and prescription management
-- Vitals and observation storage
-- Allergy and procedure record support
-- Organization and hospital data management
-- Synthetic audit-log dataset for security analysis
-- Suitable for machine learning and anomaly detection experiments
+## Key Features
 
-## Tech Stack
+- JWT-based authentication
+- Role-Based Access Control (RBAC)
+- Patient profile management
+- Doctor profile and specialization management
+- Appointment booking and queue tracking
+- Real-time queue updates using WebSocket
+- Medical record creation and versioning
+- Prescription and diagnosis storage
+- Audit chain for tamper detection
+- PostgreSQL schema with migration support
+- Docker-based production deployment setup
+- AWS Terraform deployment files
+- Detailed setup, API, deployment, and user documentation
 
-The project can be implemented using:
+---
 
-- Python
-- Pandas
-- NumPy
-- Scikit-learn
-- SQL / DBMS
-- Flask or Streamlit 
-- CSV-based datasets
+## Technology Stack
+
+### Backend
+
+- Python 3.9+
+- FastAPI
+- Uvicorn
+- SQLAlchemy
+- Alembic
+- PostgreSQL
+- Pydantic
+- JWT using `python-jose`
+- Password hashing using `passlib`
+- WebSocket support
+- Pytest
+
+### Database
+
+- PostgreSQL 13+
+- SQL schema scripts
+- Alembic migrations
+- Sample data scripts
+- Audit chain table for integrity verification
+
+### Mobile
+
 - Flutter
+- Dart
+- Provider
+- HTTP package
+- WebSocket channel
+- Shared Preferences
+- Android project scaffold
 
-## Folder Structure
+### Deployment
+
+- Docker
+- Docker Compose
+- Nginx
+- Redis for optional WebSocket scaling
+- AWS Terraform files
+- Backup and restore shell scripts
+
+---
+
+## Repository Structure
 
 ```text
-capstone/
-│
-├── datasets/
-│   ├── 01_patients.csv
-│   ├── 02_appointments_encounters.csv
-│   ├── 03_diagnoses_conditions.csv
-│   ├── 04_prescriptions_medications.csv
-│   ├── 05_vitals_observations.csv
-│   ├── 06_allergies.csv
-│   ├── 07_procedures.csv
-│   ├── 08_organizations.csv
-│   └── 09_audit_logs_synthetic.csv
-│
-├── notebooks/
-│   └── data_analysis.ipynb
-│
-├── src/
-│   └── main.py
+capstone-main/
 │
 ├── README.md
-└── requirements.txt
+│
+├── docs/
+│   ├── Comprehensive_Research_Report_Intelligent_MediFlow_Pipeline.pdf
+│   ├── MediFlow Capstone Proposal.docx
+│   ├── MediFlow-Consolidated-Complete.md
+│   ├── Project Proposal.docx
+│   └── Project Proposal.pdf
+│
+├── project/
+│   ├── .env.example
+│   ├── requirements.txt
+│   ├── alembic.ini
+│   │
+│   ├── alembic/
+│   │   ├── env.py
+│   │   ├── script.py.mako
+│   │   └── versions/
+│   │       ├── 001_initial_schema.py
+│   │       └── 002_seed_data.py
+│   │
+│   ├── backend/
+│   │   ├── requirements.txt
+│   │   ├── run.py
+│   │   ├── setup_tables.py
+│   │   ├── load_test_data.py
+│   │   └── app/
+│   │       ├── main.py
+│   │       ├── api/v1/
+│   │       │   ├── router.py
+│   │       │   └── endpoints/
+│   │       │       ├── auth.py
+│   │       │       ├── users.py
+│   │       │       ├── appointments.py
+│   │       │       ├── queue.py
+│   │       │       ├── medical_records.py
+│   │       │       ├── audit.py
+│   │       │       └── websocket.py
+│   │       ├── core/
+│   │       ├── db/
+│   │       ├── models/
+│   │       ├── schemas/
+│   │       ├── services/
+│   │       └── middleware/
+│   │
+│   ├── database/
+│   │   ├── schema.sql
+│   │   ├── sample_data.sql
+│   │   ├── validate_schema.sh
+│   │   └── verify_schema.sql
+│   │
+│   ├── deployment/
+│   │   ├── docker/
+│   │   │   ├── Dockerfile.backend
+│   │   │   ├── docker-compose.production.yml
+│   │   │   ├── nginx.conf
+│   │   │   └── init-db.sh
+│   │   ├── aws/terraform/
+│   │   └── scripts/
+│   │
+│   ├── documentation/
+│   │   ├── 1_QUICK_START.md
+│   │   ├── 2_BACKEND_SETUP.md
+│   │   ├── 3_DATABASE_SETUP.md
+│   │   ├── 4_API_DOCUMENTATION.md
+│   │   ├── 5_DEPLOYMENT.md
+│   │   ├── 6_MOBILE_APP.md
+│   │   ├── 7_USER_GUIDE.md
+│   │   ├── PROJECT_OVERVIEW.md
+│   │   ├── CAPSTONE_REPORT.md
+│   │   └── TESTING_DEPLOYMENT.md
+│   │
+│   └── mobile/
+│       ├── pubspec.yaml
+│       ├── analysis_options.yaml
+│       └── android/
+│
+└── research/
+    ├── 1_SMART_FHIR_Overview.md
+    ├── 2_Privacy_Security_Issues.md
+    ├── 3_Data_Integrity_Issues.md
+    ├── 4_Problem_Analysis.md
+    ├── 5_Solution_Framework.md
+    ├── 6_Research_References.md
+    ├── 7_Existing_Solutions_and_Novelty.md
+    └── README.md
+```
+
+---
+
+## Core System Modules
+
+### 1. Authentication and Authorization
+
+Located in:
+
+```text
+project/backend/app/api/v1/endpoints/auth.py
+project/backend/app/core/security.py
+```
+
+Includes:
+
+- User registration
+- User login
+- JWT access tokens
+- Refresh tokens
+- Password hashing
+- Role-based access validation
+
+### 2. User Management
+
+Located in:
+
+```text
+project/backend/app/api/v1/endpoints/users.py
+project/backend/app/models/user.py
+project/backend/app/schemas/user.py
+```
+
+Supports user profiles for Admin, Doctor, Nurse, and Patient roles.
+
+### 3. Appointment Management
+
+Located in:
+
+```text
+project/backend/app/api/v1/endpoints/appointments.py
+project/backend/app/models/appointment.py
+project/backend/app/services/appointment_service.py
+```
+
+Handles:
+
+- Appointment booking
+- Appointment status updates
+- Doctor-wise appointment lists
+- Patient appointment history
+
+### 4. Queue Management
+
+Located in:
+
+```text
+project/backend/app/api/v1/endpoints/queue.py
+project/backend/app/api/v1/endpoints/websocket.py
+project/backend/app/services/websocket_manager.py
+```
+
+Supports:
+
+- Live queue updates
+- Patient queue position tracking
+- Estimated wait time calculation
+- WebSocket-based real-time communication
+
+### 5. Medical Records
+
+Located in:
+
+```text
+project/backend/app/api/v1/endpoints/medical_records.py
+project/backend/app/models/medical_record.py
+project/backend/app/schemas/medical_record.py
+```
+
+Supports:
+
+- Diagnosis storage
+- Prescription storage
+- Consultation notes
+- Medical record versioning
+- Patient medical history
+
+### 6. Audit Chain and Integrity Verification
+
+Located in:
+
+```text
+project/backend/app/api/v1/endpoints/audit.py
+project/backend/app/models/audit_chain.py
+project/backend/app/services/blockchain_service.py
+```
+
+Includes:
+
+- SHA-256 based hash chain
+- Previous-hash linking
+- Tamper detection
+- Medical record integrity verification
+- Admin audit monitoring
+
+---
+
+## Documentation Map
+
+The repository already includes detailed documentation inside `project/documentation/`.
+
+| Document | Purpose |
+|---|---|
+| `1_QUICK_START.md` | Fast local setup guide |
+| `2_BACKEND_SETUP.md` | Backend installation and configuration |
+| `3_DATABASE_SETUP.md` | Database schema, setup scripts, and SQL details |
+| `4_API_DOCUMENTATION.md` | API endpoints, request bodies, responses, and auth flow |
+| `5_DEPLOYMENT.md` | Docker, AWS, SSL, backup, and monitoring setup |
+| `6_MOBILE_APP.md` | Flutter mobile app guide |
+| `7_USER_GUIDE.md` | Role-wise usage guide for patients, doctors, nurses, and admins |
+| `PROJECT_OVERVIEW.md` | Full capstone project overview |
+| `CAPSTONE_REPORT.md` | Capstone report version |
+| `TESTING_DEPLOYMENT.md` | Testing and deployment notes |
+
+---
+
+## Prerequisites
+
+Before running the project locally, install:
+
+- Python 3.9 or higher
+- PostgreSQL 13 or higher
+- pip
+- Git
+- Flutter SDK, only if working on the mobile app
+- Docker and Docker Compose, only if using containerized deployment
+
+---
+
+## Local Setup
+
+### 1. Clone the Repository
+
+```bash
+git clone https://github.com/vaani1127/capstone.git
+cd capstone
+```
+
+If your extracted folder is named `capstone-main`, move into it:
+
+```bash
+cd capstone-main
+```
+
+### 2. Move into the Project Folder
+
+```bash
+cd project
+```
+
+### 3. Create Environment File
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` and set your PostgreSQL connection string and secret key.
+
+Example for local PostgreSQL:
+
+```env
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/healthsaathi
+SECRET_KEY=change-this-to-a-secure-random-key
+ALGORITHM=HS256
+ACCESS_TOKEN_EXPIRE_MINUTES=30
+HOST=0.0.0.0
+PORT=8000
+DEBUG=True
+ALLOWED_ORIGINS=http://localhost:3000,http://localhost:8000
+```
+
+### 4. Install Backend Dependencies
+
+From the `project/` folder:
+
+```bash
+pip install -r requirements.txt
+```
+
+Or from the backend folder:
+
+```bash
+cd backend
+pip install -r requirements.txt
+```
+
+---
+
+## Backend API
+
+### Run the Backend Locally
+
+From:
+
+```text
+project/backend/
+```
+
+Run:
+
+```bash
+python setup_tables.py
+python load_test_data.py
+python run.py
+```
+
+The API will be available at:
+
+```text
+http://localhost:8000
+```
+
+Interactive API documentation:
+
+```text
+http://localhost:8000/api/docs
+```
+
+ReDoc documentation:
+
+```text
+http://localhost:8000/api/redoc
+```
+
+Health check endpoint:
+
+```text
+http://localhost:8000/health
+```
+
+---
+
+## Database Setup
+
+The database files are located in:
+
+```text
+project/database/
+```
+
+Important files:
+
+| File | Purpose |
+|---|---|
+| `schema.sql` | Creates all main PostgreSQL tables |
+| `sample_data.sql` | Inserts sample users, patients, doctors, appointments, and records |
+| `verify_schema.sql` | Verifies database structure |
+| `validate_schema.sh` | Shell script for schema validation |
+
+### Main Tables
+
+| Table | Purpose |
+|---|---|
+| `users` | Stores authentication and role information |
+| `patients` | Stores patient demographic details |
+| `doctors` | Stores doctor profile and specialization information |
+| `appointments` | Stores appointment and queue data |
+| `medical_records` | Stores diagnosis, prescription, and consultation information |
+| `audit_chain` | Stores integrity hashes and audit trail records |
+
+### Setup Using Scripts
+
+From:
+
+```text
+project/backend/
+```
+
+Run:
+
+```bash
+python setup_tables.py
+python load_test_data.py
+```
+
+---
+
+## Mobile App
+
+The Flutter mobile project is located in:
+
+```text
+project/mobile/
+```
+
+Install dependencies:
+
+```bash
+cd project/mobile
+flutter pub get
+```
+
+Run on Android:
+
+```bash
+flutter run -d android
+```
+
+The current ZIP contains the Flutter configuration and Android project scaffold. The mobile documentation describes the planned role-based screens and API integration flow.
+
+---
+
+## Deployment
+
+### Docker Deployment
+
+Docker files are located in:
+
+```text
+project/deployment/docker/
+```
+
+Run production Docker Compose:
+
+```bash
+cd project/deployment/docker
+docker-compose -f docker-compose.production.yml up -d
+```
+
+This setup includes:
+
+- PostgreSQL database container
+- FastAPI backend container
+- Nginx reverse proxy
+- Redis container for optional WebSocket scaling
+
+### AWS Deployment
+
+Terraform files are located in:
+
+```text
+project/deployment/aws/terraform/
+```
+
+Basic flow:
+
+```bash
+cd project/deployment/aws/terraform
+terraform init
+terraform plan
+terraform apply
+```
+
+### Utility Scripts
+
+Deployment scripts are available in:
+
+```text
+project/deployment/scripts/
+```
+
+| Script | Purpose |
+|---|---|
+| `deploy.sh` | Deployment helper |
+| `backup-database.sh` | Database backup |
+| `restore-database.sh` | Database restore |
+| `health-check.sh` | Production health check |
+| `setup-ssl.sh` | SSL setup helper |
+
+---
+
+## Test Credentials
+
+After loading sample data, these test users may be available:
+
+| Role | Email | Password |
+|---|---|---|
+| Admin | `admin@healthsaathi.com` | `password123` |
+| Doctor | `rajesh.kumar@healthsaathi.com` | `password123` |
+| Nurse | `sunita@healthsaathi.com` | `password123` |
+| Patient | `rahul.verma@example.com` | `password123` |
+
+---
+
+## Environment Variables
+
+Main environment file:
+
+```text
+project/.env.example
+```
+
+Common variables:
+
+| Variable | Description |
+|---|---|
+| `DATABASE_URL` | PostgreSQL database connection URL |
+| `SECRET_KEY` | JWT signing key |
+| `ALGORITHM` | JWT algorithm, usually `HS256` |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | Access token expiry time |
+| `HOST` | Backend host |
+| `PORT` | Backend port |
+| `DEBUG` | Development debug mode |
+| `ALLOWED_ORIGINS` | CORS allowed origins |
+
+---
+
+## Research and Proposal Documents
+
+The repository includes capstone research and proposal material in two places:
+
+### `docs/`
+
+Contains final proposal and consolidated MediFlow research documents, including PDF and DOCX files.
+
+### `research/`
+
+Contains SMART on FHIR security and healthcare interoperability research:
+
+- SMART on FHIR overview
+- Privacy and security issues
+- Data integrity challenges
+- Problem analysis
+- Solution framework
+- Research references
+- Existing solutions and novelty analysis
+
+These documents support the academic and research background of the project.
+
+---
+
+## Future Scope
+
+Possible improvements:
+
+- Complete Flutter UI implementation
+- Add full mobile screens for all user roles
+- Add automated test coverage reports
+- Add CI/CD pipeline using GitHub Actions
+- Improve audit dashboard visualizations
+- Add notification support for appointments and queue updates
+- Add cloud database setup guide for Neon, AWS RDS, or Supabase
+- Add FHIR-compatible export for medical records
+- Add patient consent management
+- Add analytics dashboard for administrators
+
+---
+
+## Important Notes
+
+- Do not commit the real `.env` file.
+- Use a strong `SECRET_KEY` in production.
+- Change all sample passwords before deployment.
+- Restrict CORS origins in production.
+- Use HTTPS in production.
+- Keep database backups enabled.
+- Review healthcare privacy and compliance requirements before using real patient data.
+
+---
+
+## License
+
+This project is created for academic and capstone project purposes. Add a formal license file before public or production use.
