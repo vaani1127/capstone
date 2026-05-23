@@ -1,4 +1,4 @@
-# HealthSaathi
+3# HealthSaathi
 
 A mobile-based secure healthcare management system for clinics and hospitals. HealthSaathi provides role-based access for patients, doctors, nurses, and administrators, with appointment booking, real-time queue management, medical record handling, audit logging, and blockchain-style integrity verification for sensitive healthcare records.
 
@@ -121,89 +121,10 @@ capstone-main/
 ├── README.md
 │
 ├── docs/
-│   ├── Comprehensive_Research_Report_Intelligent_MediFlow_Pipeline.pdf
-│   ├── MediFlow Capstone Proposal.docx
-│   ├── MediFlow-Consolidated-Complete.md
-│   ├── Project Proposal.docx
-│   └── Project Proposal.pdf
 │
 ├── project/
-│   ├── .env.example
-│   ├── requirements.txt
-│   ├── alembic.ini
-│   │
-│   ├── alembic/
-│   │   ├── env.py
-│   │   ├── script.py.mako
-│   │   └── versions/
-│   │       ├── 001_initial_schema.py
-│   │       └── 002_seed_data.py
-│   │
-│   ├── backend/
-│   │   ├── requirements.txt
-│   │   ├── run.py
-│   │   ├── setup_tables.py
-│   │   ├── load_test_data.py
-│   │   └── app/
-│   │       ├── main.py
-│   │       ├── api/v1/
-│   │       │   ├── router.py
-│   │       │   └── endpoints/
-│   │       │       ├── auth.py
-│   │       │       ├── users.py
-│   │       │       ├── appointments.py
-│   │       │       ├── queue.py
-│   │       │       ├── medical_records.py
-│   │       │       ├── audit.py
-│   │       │       └── websocket.py
-│   │       ├── core/
-│   │       ├── db/
-│   │       ├── models/
-│   │       ├── schemas/
-│   │       ├── services/
-│   │       └── middleware/
-│   │
-│   ├── database/
-│   │   ├── schema.sql
-│   │   ├── sample_data.sql
-│   │   ├── validate_schema.sh
-│   │   └── verify_schema.sql
-│   │
-│   ├── deployment/
-│   │   ├── docker/
-│   │   │   ├── Dockerfile.backend
-│   │   │   ├── docker-compose.production.yml
-│   │   │   ├── nginx.conf
-│   │   │   └── init-db.sh
-│   │   ├── aws/terraform/
-│   │   └── scripts/
-│   │
-│   ├── documentation/
-│   │   ├── 1_QUICK_START.md
-│   │   ├── 2_BACKEND_SETUP.md
-│   │   ├── 3_DATABASE_SETUP.md
-│   │   ├── 4_API_DOCUMENTATION.md
-│   │   ├── 5_DEPLOYMENT.md
-│   │   ├── 6_MOBILE_APP.md
-│   │   ├── 7_USER_GUIDE.md
-│   │   ├── PROJECT_OVERVIEW.md
-│   │   ├── CAPSTONE_REPORT.md
-│   │   └── TESTING_DEPLOYMENT.md
-│   │
-│   └── mobile/
-│       ├── pubspec.yaml
-│       ├── analysis_options.yaml
-│       └── android/
 │
 └── research/
-    ├── 1_SMART_FHIR_Overview.md
-    ├── 2_Privacy_Security_Issues.md
-    ├── 3_Data_Integrity_Issues.md
-    ├── 4_Problem_Analysis.md
-    ├── 5_Solution_Framework.md
-    ├── 6_Research_References.md
-    ├── 7_Existing_Solutions_and_Novelty.md
-    └── README.md
 ```
 
 ---
@@ -576,19 +497,6 @@ project/deployment/scripts/
 
 ---
 
-## Test Credentials
-
-After loading sample data, these test users may be available:
-
-| Role | Email | Password |
-|---|---|---|
-| Admin | `admin@healthsaathi.com` | `password123` |
-| Doctor | `rajesh.kumar@healthsaathi.com` | `password123` |
-| Nurse | `sunita@healthsaathi.com` | `password123` |
-| Patient | `rahul.verma@example.com` | `password123` |
-
----
-
 ## Environment Variables
 
 Main environment file:
@@ -615,10 +523,9 @@ Common variables:
 ## Research and Proposal Documents
 
 The repository includes capstone research and proposal material in two places:
-
 ### `docs/`
 
-Contains final proposal and consolidated MediFlow research documents, including PDF and DOCX files.
+Contains final proposal and consolidated MediFlow research documents.
 
 ### `research/`
 
@@ -632,7 +539,7 @@ Contains SMART on FHIR security and healthcare interoperability research:
 - Research references
 - Existing solutions and novelty analysis
 
-These documents support the academic and research background of the project.
+These documents support the research background of the project.
 
 ---
 
@@ -650,18 +557,6 @@ Possible improvements:
 - Add FHIR-compatible export for medical records
 - Add patient consent management
 - Add analytics dashboard for administrators
-
----
-
-## Important Notes
-
-- Do not commit the real `.env` file.
-- Use a strong `SECRET_KEY` in production.
-- Change all sample passwords before deployment.
-- Restrict CORS origins in production.
-- Use HTTPS in production.
-- Keep database backups enabled.
-- Review healthcare privacy and compliance requirements before using real patient data.
 
 ---
 
