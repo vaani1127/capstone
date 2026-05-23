@@ -1,4 +1,4 @@
-3# HealthSaathi
+# HealthSaathi
 
 A mobile-based secure healthcare management system for clinics and hospitals. HealthSaathi provides role-based access for patients, doctors, nurses, and administrators, with appointment booking, real-time queue management, medical record handling, audit logging, and blockchain-style integrity verification for sensitive healthcare records.
 
