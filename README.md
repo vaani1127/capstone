@@ -54,9 +54,9 @@ The project can be implemented using:
 - NumPy
 - Scikit-learn
 - SQL / DBMS
-- Flask or Streamlit
+- Flask or Streamlit 
 - CSV-based datasets
-- Jupyter Notebook / Google Colab
+- Flutter
 
 ## Folder Structure
 
