@@ -49,13 +49,13 @@ class Appointment(BaseModel):
     doctor_id = Column(Integer, ForeignKey("doctors.id", ondelete="CASCADE"), index=True)
     scheduled_time = Column(DateTime, nullable=False, index=True)
     status = Column(
-        SQLEnum(AppointmentStatus, name="appointment_status", create_type=False),
+        SQLEnum(AppointmentStatus, name="appointment_status", create_type=False, values_callable=lambda x: [e.value for e in x]),
         default=AppointmentStatus.SCHEDULED,
         nullable=False,
         index=True
     )
     appointment_type = Column(
-        SQLEnum(AppointmentType, name="appointment_type_enum", create_type=False),
+        SQLEnum(AppointmentType, name="appointment_type_enum", create_type=False, values_callable=lambda x: [e.value for e in x]),
         default=AppointmentType.SCHEDULED,
         nullable=False
     )

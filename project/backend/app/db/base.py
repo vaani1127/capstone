@@ -42,3 +42,9 @@ def import_models():
     from app.models.appointment import Appointment
     from app.models.medical_record import MedicalRecord
     from app.models.audit_chain import AuditChain
+    from app.models.anomaly_alert import AnomalyAlert
+    from app.models.vitals import Vitals
+    from app.models.allergy import Allergy
+    from app.models.organization import Organization
+    from app.models.provider import Provider
+    from app.models.procedure import Procedure

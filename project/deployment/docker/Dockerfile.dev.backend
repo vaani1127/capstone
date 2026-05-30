@@ -1,0 +1,22 @@
+# Development backend Dockerfile
+# Lightweight — runs as root for simplicity, no multi-stage build.
+# Source code is mounted at /app via the docker-compose volume, enabling live reload.
+# The database schema is applied by the PostgreSQL init script; no migration step here.
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq-dev \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install deps first so this layer is cached unless requirements.txt changes.
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+EXPOSE 8000
+
+# --reload watches /app for file changes — source is mounted via compose volume.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--log-level", "debug"]

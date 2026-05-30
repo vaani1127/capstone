@@ -1,0 +1,67 @@
+version: '3.8'
+
+# Development compose — hot-reload backend, no Nginx, no SSL, no Redis.
+# Usage:
+#   cd project/deployment/docker
+#   docker-compose -f docker-compose.dev.yml up --build
+
+services:
+  # PostgreSQL — schema is auto-applied via init script on first run.
+  db:
+    image: postgres:13-alpine
+    container_name: healthsaathi-db-dev
+    environment:
+      POSTGRES_DB: healthsaathi_dev
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: devpassword
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+      - ../../database/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - healthsaathi-dev
+
+  # Backend — source code mounted for live reload.
+  # DATABASE_URL points to the db service above.
+  backend:
+    build:
+      context: ../../backend
+      dockerfile: ../deployment/docker/Dockerfile.dev.backend
+    container_name: healthsaathi-backend-dev
+    environment:
+      DATABASE_URL: postgresql://postgres:devpassword@db:5432/healthsaathi_dev
+      SECRET_KEY: dev-secret-key-do-not-use-in-production-32c
+      ALGORITHM: HS256
+      ACCESS_TOKEN_EXPIRE_MINUTES: 60
+      REFRESH_TOKEN_EXPIRE_DAYS: 7
+      DEBUG: "true"
+      ENVIRONMENT: development
+      ALLOWED_ORIGINS: "http://localhost:3000,http://localhost:8000,http://localhost:*"
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    volumes:
+      # Mount source code for hot-reload without rebuild
+      - ../../backend:/app
+      # Mount database for load_test_data.py script
+      - ../../database:/database
+    restart: on-failure
+    networks:
+      - healthsaathi-dev
+
+volumes:
+  postgres_dev_data:
+    driver: local
+
+networks:
+  healthsaathi-dev:
+    driver: bridge

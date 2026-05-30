@@ -10,11 +10,17 @@ import logging
 import math
 import json
 
+from fastapi import HTTPException
 from app.db.session import get_db
 from app.models.user import User
 from app.models.audit_chain import AuditChain
 from app.schemas.audit import AuditLogResponse, AuditLogListResponse, TamperingAlertResponse
 from app.core.dependencies import require_admin
+from app.services.blockchain_service import (
+    verify_record_integrity,
+    verify_chain_integrity,
+    flag_tampered_record,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -188,29 +194,73 @@ async def get_tampering_alerts(
         raise
 
 
-@router.post("/verify/{record_id}", response_model=dict)
-async def verify_record_integrity(
+@router.post("/verify/{record_id}")
+async def verify_medical_record_integrity(
     record_id: int,
-    record_type: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_admin)
 ):
     """
-    Manually verify integrity of a specific record (Admin only).
-    
+    Manually verify integrity of a medical record (Admin only).
+
+    Recomputes the SHA-256 hash from stored audit chain inputs and compares it
+    to the stored hash. If a mismatch is detected, the record is flagged as
+    tampered in the audit chain.
+
     **Required Role:** Admin
-    
-    Args:
-        record_id: ID of the record to verify
-        record_type: Type of record (e.g., 'medical_record')
-        db: Database session
-        current_user: Current authenticated admin
-        
+
     Returns:
-        Verification result with hash comparison details
+        JSON with is_valid, record_id, and a human-readable message
     """
-    # TODO: Implement manual integrity verification
-    return {}
+    try:
+        is_valid = verify_record_integrity(db, record_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    if not is_valid:
+        flag_tampered_record(db, record_id, "medical_record")
+        logger.warning(
+            f"Admin {current_user.email} verified record {record_id}: TAMPERED — flagged in audit chain"
+        )
+        return {
+            "is_valid": False,
+            "record_id": record_id,
+            "message": "Integrity verification FAILED — record has been tampered and flagged in the audit chain"
+        }
+
+    logger.info(f"Admin {current_user.email} verified record {record_id}: integrity OK")
+    return {
+        "is_valid": True,
+        "record_id": record_id,
+        "message": "Integrity verified — record hash matches audit chain entry"
+    }
+
+
+@router.get("/chain-integrity")
+async def get_chain_integrity(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin)
+):
+    """
+    Verify the integrity of the entire audit chain (Admin only).
+
+    Checks every block in the audit chain:
+        - Genesis block has previous_hash = "0"
+        - Each block's hash is correctly computed from its stored inputs
+        - Each block's previous_hash matches the prior block's hash
+
+    **Required Role:** Admin
+
+    Returns:
+        Full chain verification report with is_valid, counts, and any inconsistencies
+    """
+    result = verify_chain_integrity(db)
+    logger.info(
+        f"Admin {current_user.email} ran chain integrity check: "
+        f"{'VALID' if result['is_valid'] else 'INVALID'} "
+        f"({result['verified_blocks']}/{result['total_blocks']} blocks verified)"
+    )
+    return result
 
 
 @router.get("/export")
@@ -246,7 +296,6 @@ async def export_audit_logs(
     import io
     
     try:
-        # Validate format
         if format not in ["json", "csv"]:
             raise HTTPException(status_code=400, detail="Invalid format. Must be 'json' or 'csv'")
         
@@ -370,159 +419,5 @@ async def export_audit_logs(
         raise
 
 
-@router.get("/export")
-async def export_audit_logs(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_admin),
-    format: str = Query("json", description="Export format: 'json' or 'csv'"),
-    start_date: Optional[datetime] = Query(None, description="Filter by start date (ISO format)"),
-    end_date: Optional[datetime] = Query(None, description="Filter by end date (ISO format)"),
-    user_id: Optional[int] = Query(None, description="Filter by user ID"),
-    record_type: Optional[str] = Query(None, description="Filter by record type (e.g., 'medical_record', 'appointment')")
-):
-    """
-    Export audit logs in CSV or JSON format (Admin only).
 
-    **Required Role:** Admin
-
-    Args:
-        db: Database session
-        current_user: Current authenticated admin
-        format: Export format - 'json' or 'csv' (default: json)
-        start_date: Filter by start date (optional)
-        end_date: Filter by end date (optional)
-        user_id: Filter by user ID (optional)
-        record_type: Filter by record type (optional)
-
-    Returns:
-        Audit logs in requested format with appropriate content-type headers
-    """
-    from fastapi.responses import StreamingResponse
-    import csv
-    import io
-
-    try:
-        # Validate format
-        if format not in ["json", "csv"]:
-            from fastapi import HTTPException
-            raise HTTPException(status_code=400, detail="Invalid format. Must be 'json' or 'csv'")
-
-        # Build query with filters (same as get_audit_logs)
-        query = db.query(AuditChain)
-
-        filters = []
-
-        # Apply date range filter
-        if start_date:
-            filters.append(AuditChain.timestamp >= start_date)
-            logger.debug(f"Filtering export from: {start_date}")
-
-        if end_date:
-            filters.append(AuditChain.timestamp <= end_date)
-            logger.debug(f"Filtering export until: {end_date}")
-
-        # Apply user filter
-        if user_id is not None:
-            filters.append(AuditChain.user_id == user_id)
-            logger.debug(f"Filtering export by user_id: {user_id}")
-
-        # Apply record type filter
-        if record_type:
-            filters.append(AuditChain.record_type == record_type)
-            logger.debug(f"Filtering export by record_type: {record_type}")
-
-        # Apply all filters
-        if filters:
-            query = query.filter(and_(*filters))
-
-        # Get all matching entries (ordered by timestamp, newest first)
-        audit_entries = query.order_by(AuditChain.timestamp.desc()).all()
-
-        logger.info(
-            f"Admin {current_user.email} exporting {len(audit_entries)} audit logs "
-            f"in {format.upper()} format"
-        )
-
-        if format == "json":
-            # Export as JSON
-            logs = []
-            for entry in audit_entries:
-                log_data = {
-                    "id": entry.id,
-                    "record_id": entry.record_id,
-                    "record_type": entry.record_type,
-                    "record_data": entry.record_data,
-                    "hash": entry.hash,
-                    "previous_hash": entry.previous_hash,
-                    "timestamp": entry.timestamp.isoformat(),
-                    "user_id": entry.user_id,
-                    "is_tampered": entry.is_tampered,
-                    "user_name": entry.user.name if entry.user else None,
-                    "user_email": entry.user.email if entry.user else None
-                }
-                logs.append(log_data)
-
-            # Convert to JSON string
-            json_content = json.dumps(logs, indent=2)
-
-            # Return as downloadable file
-            return StreamingResponse(
-                io.BytesIO(json_content.encode()),
-                media_type="application/json",
-                headers={
-                    "Content-Disposition": f"attachment; filename=audit_logs_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.json"
-                }
-            )
-
-        else:  # format == "csv"
-            # Export as CSV
-            output = io.StringIO()
-            writer = csv.writer(output)
-
-            # Write header
-            writer.writerow([
-                "id",
-                "record_id",
-                "record_type",
-                "record_data",
-                "hash",
-                "previous_hash",
-                "timestamp",
-                "user_id",
-                "user_name",
-                "user_email",
-                "is_tampered"
-            ])
-
-            # Write data rows
-            for entry in audit_entries:
-                writer.writerow([
-                    entry.id,
-                    entry.record_id,
-                    entry.record_type,
-                    json.dumps(entry.record_data),  # Convert dict to JSON string for CSV
-                    entry.hash,
-                    entry.previous_hash,
-                    entry.timestamp.isoformat(),
-                    entry.user_id if entry.user_id else "",
-                    entry.user.name if entry.user else "",
-                    entry.user.email if entry.user else "",
-                    entry.is_tampered
-                ])
-
-            # Get CSV content
-            csv_content = output.getvalue()
-
-            # Return as downloadable file
-            return StreamingResponse(
-                io.BytesIO(csv_content.encode()),
-                media_type="text/csv",
-                headers={
-                    "Content-Disposition": f"attachment; filename=audit_logs_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.csv"
-                }
-            )
-
-    except Exception as e:
-        logger.error(f"Error exporting audit logs: {str(e)}")
-        raise
 

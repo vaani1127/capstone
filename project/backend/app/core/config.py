@@ -8,19 +8,29 @@ from pydantic import PostgresDsn, field_validator, AnyUrl
 
 class Settings(BaseSettings):
     """Application settings"""
-    
+
     # Project Info
     PROJECT_NAME: str = "HealthSaathi API"
     VERSION: str = "1.0.0"
-    
+
     # Database - Allow any URL for testing
     DATABASE_URL: Union[PostgresDsn, AnyUrl]
-    
+
     # Security
     SECRET_KEY: str
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+
+    @field_validator("SECRET_KEY")
+    @classmethod
+    def validate_secret_key(cls, v: str) -> str:
+        if len(v) < 32:
+            raise ValueError(
+                "SECRET_KEY must be at least 32 characters. "
+                "Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(32))\""
+            )
+        return v
     
     # CORS
     ALLOWED_ORIGINS: str = "*"

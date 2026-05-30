@@ -23,6 +23,8 @@ class ConnectionManager:
         self.active_connections: Dict[int, List[WebSocket]] = {}
         # Track connection metadata
         self.connection_metadata: Dict[WebSocket, dict] = {}
+        # Admin-only connections for anomaly alert delivery
+        self._admin_connections: Dict[int, List[WebSocket]] = {}
         logger.info("WebSocket ConnectionManager initialized")
     
     async def connect(self, websocket: WebSocket, user_id: int, user_email: str = None):
@@ -246,6 +248,58 @@ class ConnectionManager:
             f"appointment_id={appointment_data.get('id')}, "
             f"patient_user_id={patient_user_id}, "
             f"doctor_user_id={doctor_user_id}"
+        )
+
+    async def connect_admin(self, websocket: WebSocket, user_id: int) -> None:
+        """
+        Accept and register a WebSocket connection in the admin-only pool.
+
+        Args:
+            websocket: WebSocket connection instance
+            user_id: ID of the authenticated admin user
+        """
+        await websocket.accept()
+        if user_id not in self._admin_connections:
+            self._admin_connections[user_id] = []
+        self._admin_connections[user_id].append(websocket)
+        logger.info(f"Admin WebSocket connected: user_id={user_id}")
+
+    def disconnect_admin(self, websocket: WebSocket, user_id: int) -> None:
+        """
+        Remove a WebSocket connection from the admin-only pool.
+
+        Args:
+            websocket: WebSocket connection to remove
+            user_id: ID of the admin user
+        """
+        if user_id in self._admin_connections:
+            if websocket in self._admin_connections[user_id]:
+                self._admin_connections[user_id].remove(websocket)
+            if not self._admin_connections[user_id]:
+                del self._admin_connections[user_id]
+        logger.info(f"Admin WebSocket disconnected: user_id={user_id}")
+
+    async def broadcast_anomaly_alert(self, payload: dict) -> None:
+        """
+        Broadcast an anomaly alert payload to all connected admin clients.
+
+        Args:
+            payload: Alert data dict (will be JSON serialized)
+        """
+        dead: list = []
+        for user_id, connections in list(self._admin_connections.items()):
+            for connection in connections:
+                try:
+                    await connection.send_json(payload)
+                except Exception as e:
+                    logger.error(f"Error sending anomaly alert to admin user_id={user_id}: {e}")
+                    dead.append((user_id, connection))
+
+        for user_id, connection in dead:
+            self.disconnect_admin(connection, user_id)
+
+        logger.info(
+            f"Anomaly alert broadcast to {len(self._admin_connections)} admin connection(s)"
         )
 
 

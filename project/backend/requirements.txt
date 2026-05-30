@@ -6,6 +6,7 @@ python-multipart==0.0.6
 # Database
 sqlalchemy==2.0.25
 psycopg[binary]==3.1.18
+psycopg2-binary==2.9.9
 alembic==1.13.1
 
 # Authentication & Security
@@ -30,3 +31,10 @@ httpx==0.26.0
 black==23.12.1
 flake8==7.0.0
 mypy==1.8.0
+
+# Machine Learning — Anomaly Detection
+scikit-learn==1.4.2
+shap==0.45.1
+numpy==1.26.4
+pandas==2.2.2
+joblib==1.4.2

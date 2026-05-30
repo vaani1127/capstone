@@ -35,12 +35,26 @@ class UserCreate(UserBase):
 class UserResponse(UserBase):
     """Schema for user response"""
     id: int
+    email: str  # override EmailStr — walk-in patients use internal placeholder emails
     role: UserRole
+    is_active: bool
     created_at: datetime
     updated_at: datetime
-    
+
     class Config:
         from_attributes = True
+
+
+class UserUpdate(BaseModel):
+    """Schema for admin user update (PUT /users/{user_id})"""
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
+    email: Optional[EmailStr] = None
+    role: Optional[UserRole] = None
+
+
+class UserRoleUpdate(BaseModel):
+    """Schema for admin role change (PATCH /users/{user_id}/role)"""
+    role: UserRole
 
 
 class UserLogin(BaseModel):
@@ -62,3 +76,16 @@ class TokenResponse(BaseModel):
 class TokenRefresh(BaseModel):
     """Schema for token refresh request"""
     refresh_token: str
+
+
+class DoctorProfileResponse(BaseModel):
+    """Doctor profile with user info — for any authenticated user"""
+    id: int
+    user_id: int
+    name: str
+    specialization: Optional[str] = None
+    license_number: Optional[str] = None
+    average_consultation_duration: int = 15
+
+    class Config:
+        from_attributes = True

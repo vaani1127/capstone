@@ -12,6 +12,7 @@ from app.models.appointment import Appointment, AppointmentStatus, AppointmentTy
 from app.models.doctor import Doctor
 from app.models.patient import Patient
 from app.schemas.appointment import AppointmentCreate
+from app.services.blockchain_service import create_audit_entry
 
 
 class AppointmentService:
@@ -262,7 +263,14 @@ class AppointmentService:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Patient with ID {patient_id} not found"
             )
-        
+
+        # Validate appointment is in the future
+        if appointment_data.scheduled_time <= datetime.utcnow():
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Appointment must be scheduled in the future"
+            )
+
         # Check doctor availability
         is_available = AppointmentService.check_doctor_availability(
             db=db,
@@ -295,10 +303,25 @@ class AppointmentService:
         db.add(appointment)
         db.commit()
         db.refresh(appointment)
-        
+
+        # Audit chain entry for appointment creation
+        create_audit_entry(
+            db, appointment.id, "appointment_created",
+            {
+                "patient_id": appointment.patient_id,
+                "doctor_id": appointment.doctor_id,
+                "scheduled_time": appointment.scheduled_time.isoformat(),
+                "queue_position": appointment.queue_position,
+                "appointment_type": appointment.appointment_type.value,
+                "status": appointment.status.value,
+            },
+            patient.user_id
+        )
+        db.commit()
+
         # Broadcast queue update
         AppointmentService._broadcast_queue_update(db, appointment_data.doctor_id)
-        
+
         # Send appointment notification to patient and doctor
         AppointmentService._send_appointment_notification(
             db=db,
@@ -306,9 +329,9 @@ class AppointmentService:
             notification_type="appointment_created",
             message="Your appointment has been created"
         )
-        
+
         return appointment
-    
+
     @staticmethod
     def calculate_estimated_wait_time(
         db: Session,
@@ -439,22 +462,35 @@ class AppointmentService:
         # Staff (Admin, Doctor, Nurse) can cancel any appointment - no additional check needed
         
         # Check 2-hour cancellation rule
-        time_until_appointment = appointment.scheduled_time - datetime.now()
+        time_until_appointment = appointment.scheduled_time - datetime.utcnow()
         if time_until_appointment < timedelta(hours=2):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Appointments can only be cancelled at least 2 hours before the scheduled time"
             )
-        
+
         # Store doctor_id and queue_position before cancellation
         doctor_id = appointment.doctor_id
         cancelled_queue_position = appointment.queue_position
-        
+
         # Update appointment status
         appointment.status = AppointmentStatus.CANCELLED
         appointment.queue_position = None
-        appointment.updated_at = datetime.now()
-        
+        appointment.updated_at = datetime.utcnow()
+
+        db.commit()
+
+        # Audit chain entry for cancellation
+        create_audit_entry(
+            db, appointment.id, "appointment_cancelled",
+            {
+                "patient_id": appointment.patient_id,
+                "doctor_id": appointment.doctor_id,
+                "scheduled_time": appointment.scheduled_time.isoformat(),
+                "cancelled_by_user_id": user_id,
+            },
+            user_id
+        )
         db.commit()
         
         # Update queue positions for remaining appointments
@@ -512,8 +548,8 @@ class AppointmentService:
         # Decrement queue positions
         for appointment in appointments_to_update:
             appointment.queue_position -= 1
-            appointment.updated_at = datetime.now()
-        
+            appointment.updated_at = datetime.utcnow()
+
         db.commit()
     
     @staticmethod
@@ -573,7 +609,14 @@ class AppointmentService:
                     detail="You can only reschedule your own appointments"
                 )
         # Staff (Admin, Doctor, Nurse) can reschedule any appointment - no additional check needed
-        
+
+        # Validate new time is in the future
+        if new_scheduled_time <= datetime.utcnow():
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="New appointment time must be in the future"
+            )
+
         # Check new time slot availability (exclude current appointment)
         is_available = AppointmentService.check_doctor_availability(
             db=db,
@@ -588,13 +631,14 @@ class AppointmentService:
                 detail="Doctor is not available at the requested time. Please choose another time slot."
             )
         
-        # Store old queue position
+        # Store old queue position and old scheduled_time before update
         old_queue_position = appointment.queue_position
-        
+        old_scheduled_time = appointment.scheduled_time
+
         # Update appointment scheduled time
         appointment.scheduled_time = new_scheduled_time
-        appointment.updated_at = datetime.now()
-        
+        appointment.updated_at = datetime.utcnow()
+
         # Recalculate queue position based on new scheduled time
         # Get new queue position (add to end of queue)
         new_queue_position = AppointmentService.get_next_queue_position(
@@ -602,9 +646,23 @@ class AppointmentService:
             doctor_id=appointment.doctor_id
         )
         appointment.queue_position = new_queue_position
-        
+
         db.commit()
-        
+
+        # Audit chain entry for reschedule
+        create_audit_entry(
+            db, appointment.id, "appointment_rescheduled",
+            {
+                "patient_id": appointment.patient_id,
+                "doctor_id": appointment.doctor_id,
+                "old_scheduled_time": old_scheduled_time.isoformat(),
+                "new_scheduled_time": new_scheduled_time.isoformat(),
+                "rescheduled_by_user_id": user_id,
+            },
+            user_id
+        )
+        db.commit()
+
         # Update queue positions for appointments after the old position
         if old_queue_position:
             AppointmentService.update_queue_positions_after_cancellation(
@@ -612,12 +670,12 @@ class AppointmentService:
                 doctor_id=appointment.doctor_id,
                 cancelled_position=old_queue_position
             )
-        
+
         # Broadcast queue update
         AppointmentService._broadcast_queue_update(db, appointment.doctor_id)
-        
+
         db.refresh(appointment)
-        
+
         # Send reschedule notification to patient and doctor
         AppointmentService._send_appointment_notification(
             db=db,
@@ -738,9 +796,9 @@ class AppointmentService:
             db.add(existing_patient)
             db.flush()  # Get patient.id without committing
         
-        # Create walk-in appointment with immediate scheduled time
-        scheduled_time = datetime.now()
-        
+        # Create walk-in appointment with current UTC time as scheduled time
+        scheduled_time = datetime.utcnow()
+
         # Get next queue position
         queue_position = AppointmentService.get_next_queue_position(
             db=db,
@@ -752,7 +810,7 @@ class AppointmentService:
             patient_id=existing_patient.id,
             doctor_id=doctor_id,
             scheduled_time=scheduled_time,
-            status=AppointmentStatus.CHECKED_IN,  # Walk-ins are immediately checked in
+            status=AppointmentStatus.SCHEDULED,
             appointment_type=AppointmentType.WALK_IN,
             queue_position=queue_position
         )
@@ -761,10 +819,24 @@ class AppointmentService:
         db.commit()
         db.refresh(appointment)
         db.refresh(existing_patient)
-        
+
+        # Audit chain entry for walk-in registration
+        create_audit_entry(
+            db, appointment.id, "walk_in_registered",
+            {
+                "patient_id": existing_patient.id,
+                "doctor_id": doctor_id,
+                "is_new_patient": is_new_patient,
+                "queue_position": appointment.queue_position,
+                "scheduled_time": appointment.scheduled_time.isoformat(),
+            },
+            existing_patient.user_id
+        )
+        db.commit()
+
         # Broadcast queue update
         AppointmentService._broadcast_queue_update(db, doctor_id)
-        
+
         # Send appointment notification to patient and doctor
         AppointmentService._send_appointment_notification(
             db=db,
@@ -772,7 +844,7 @@ class AppointmentService:
             notification_type="appointment_created",
             message="Walk-in appointment has been created"
         )
-        
+
         return appointment, existing_patient, is_new_patient
     
     @staticmethod
@@ -979,25 +1051,26 @@ class AppointmentService:
                 detail=f"Invalid status transition from {current_status.value} to {new_status.value}"
             )
         
-        # Store doctor_id and queue_position before update
+        # Store doctor_id, queue_position, and old_status before update
         doctor_id = appointment.doctor_id
         old_queue_position = appointment.queue_position
-        
+        old_status = appointment.status
+
         # Update appointment status
         appointment.status = new_status
-        appointment.updated_at = datetime.now()
-        
+        appointment.updated_at = datetime.utcnow()
+
         # Track consultation start time when status changes to IN_PROGRESS
         if new_status == AppointmentStatus.IN_PROGRESS:
-            appointment.consultation_start_time = datetime.now()
-        
+            appointment.consultation_start_time = datetime.utcnow()
+
         # If status is COMPLETED, clear queue position and update remaining queue
         if new_status == AppointmentStatus.COMPLETED:
             appointment.queue_position = None
-            
+
             # Calculate actual consultation duration and update doctor's average
             if appointment.consultation_start_time:
-                actual_duration_seconds = (datetime.now() - appointment.consultation_start_time).total_seconds()
+                actual_duration_seconds = (datetime.utcnow() - appointment.consultation_start_time).total_seconds()
                 actual_duration_minutes = int(actual_duration_seconds / 60)
                 
                 # Update doctor's average consultation duration using EMA
@@ -1017,10 +1090,27 @@ class AppointmentService:
         
         db.commit()
         db.refresh(appointment)
-        
+
+        # Audit chain entry for status change
+        create_audit_entry(
+            db, appointment.id, "appointment_status_updated",
+            {
+                "old_status": old_status.value,
+                "new_status": new_status.value,
+                "doctor_id": appointment.doctor_id,
+                "patient_id": appointment.patient_id,
+                "consultation_start_time": (
+                    appointment.consultation_start_time.isoformat()
+                    if appointment.consultation_start_time else None
+                ),
+            },
+            user_id
+        )
+        db.commit()
+
         # Broadcast queue update
         AppointmentService._broadcast_queue_update(db, doctor_id)
-        
+
         # Send status change notification to patient and doctor
         AppointmentService._send_appointment_notification(
             db=db,
@@ -1028,7 +1118,7 @@ class AppointmentService:
             notification_type="status_changed",
             message=f"Your appointment status has been updated to {new_status.value}"
         )
-        
+
         return appointment
 
     @staticmethod

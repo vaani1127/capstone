@@ -48,6 +48,14 @@ class PrescriptionUpdate(BaseModel):
     duration: str = Field(..., min_length=1, description="Duration of treatment")
 
 
+class MedicalRecordCreate(BaseModel):
+    """Schema for creating a complete medical record"""
+    appointment_id: int = Field(..., gt=0, description="ID of the appointment")
+    consultation_notes: str = Field(..., min_length=1, description="Consultation notes")
+    diagnosis: Optional[str] = Field(None, description="Medical diagnosis")
+    prescription: Optional[str] = Field(None, description="Prescription details")
+
+
 class MedicalRecordUpdate(BaseModel):
     """Schema for updating a medical record"""
     consultation_notes: Optional[str] = Field(None, min_length=1)

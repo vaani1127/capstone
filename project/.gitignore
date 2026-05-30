@@ -61,3 +61,32 @@ logs/
 
 # OS
 Thumbs.db
+
+# Flutter / Dart
+mobile/build/
+mobile/.dart_tool/
+mobile/.flutter-plugins
+mobile/.flutter-plugins-dependencies
+mobile/.packages
+mobile/pubspec.lock
+mobile/.idea/
+mobile/*.iml
+mobile/android/.gradle/
+mobile/android/local.properties
+mobile/android/key.properties
+mobile/ios/.symlinks/
+mobile/ios/Pods/
+mobile/ios/Runner.xcworkspace/xcshareddata/
+mobile/coverage/
+mobile/**/*.g.dart
+mobile/**/*.freezed.dart
+
+# Python test artifacts
+backend/tests/__pycache__/
+backend/.pytest_cache/
+backend/test_healthsaathi.db
+
+# Terraform state (never commit these)
+deployment/aws/terraform/*.tfstate
+deployment/aws/terraform/*.tfstate.backup
+deployment/aws/terraform/.terraform/

@@ -1,7 +1,7 @@
 """
 Medical records management endpoints
 """
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List
 
@@ -15,6 +15,7 @@ from app.core.dependencies import get_current_user, require_doctor
 from app.schemas.medical_record import (
     ConsultationNoteCreate,
     ConsultationNoteResponse,
+    MedicalRecordCreate,
     PrescriptionCreate,
     PrescriptionUpdate,
     MedicalRecordUpdate,
@@ -22,12 +23,43 @@ from app.schemas.medical_record import (
 )
 from app.models.user import UserRole
 from app.models.audit_chain import AuditChain
-from app.services.blockchain_service import create_audit_entry, verify_record_integrity
+from app.services.blockchain_service import (
+    create_medical_record_audit_entry,
+    verify_record_integrity,
+)
 import logging
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+async def _trigger_anomaly_check(db, user_id: int, audit_entry_id: int):
+    try:
+        from app.services.anomaly_service import analyze_and_alert
+        from app.services.websocket_manager import manager
+        alert = analyze_and_alert(db, user_id, audit_entry_id)
+        if alert and alert.severity in ("MEDIUM", "HIGH"):
+            payload = {
+                "type": "anomaly_alert",
+                "severity": alert.severity,
+                "alert_id": alert.id,
+                "user_id": alert.user_id,
+                "anomaly_score": float(alert.anomaly_score),
+                "explanation": alert.explanation,
+                "top_features": alert.top_features,
+                "timestamp": alert.created_at.isoformat()
+            }
+            import asyncio
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    asyncio.ensure_future(manager.broadcast_anomaly_alert(payload))
+            except Exception:
+                pass
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Anomaly check failed: {e}")
 
 
 def check_and_flag_tampering(db: Session, record_id: int) -> bool:
@@ -279,6 +311,7 @@ async def get_my_medical_records(
 @router.post("/consultation-notes", response_model=ConsultationNoteResponse, status_code=status.HTTP_201_CREATED)
 async def create_consultation_note(
     note_data: ConsultationNoteCreate,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_doctor)
 ):
@@ -362,10 +395,11 @@ async def create_consultation_note(
         db.flush()  # Flush to get the ID without committing
         
         # Create audit chain entry in the same transaction
-        create_audit_entry(db, medical_record, current_user.id)
-        
+        audit_entry = create_medical_record_audit_entry(db, medical_record, current_user.id)
+
         db.commit()
         db.refresh(medical_record)
+        background_tasks.add_task(_trigger_anomaly_check, db, current_user.id, audit_entry.id)
         logger.info(f"Created consultation note {medical_record.id} for appointment {appointment.id}")
         return medical_record
     except Exception as e:
@@ -380,6 +414,7 @@ async def create_consultation_note(
 @router.post("/prescriptions", response_model=ConsultationNoteResponse, status_code=status.HTTP_201_CREATED)
 async def create_prescription(
     prescription_data: PrescriptionCreate,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_doctor)
 ):
@@ -470,10 +505,11 @@ async def create_prescription(
         db.flush()  # Flush to get the ID without committing
         
         # Create audit chain entry in the same transaction
-        create_audit_entry(db, medical_record, current_user.id)
-        
+        audit_entry = create_medical_record_audit_entry(db, medical_record, current_user.id)
+
         db.commit()
         db.refresh(medical_record)
+        background_tasks.add_task(_trigger_anomaly_check, db, current_user.id, audit_entry.id)
         logger.info(f"Created prescription {medical_record.id} for appointment {appointment.id}")
         return medical_record
     except Exception as e:
@@ -485,34 +521,106 @@ async def create_prescription(
         )
 
 
-@router.post("/", response_model=dict, status_code=status.HTTP_201_CREATED)
+@router.post("/", response_model=ConsultationNoteResponse, status_code=status.HTTP_201_CREATED)
 async def create_medical_record(
+    record_data: MedicalRecordCreate,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_doctor)
 ):
     """
-    Create a new medical record (Doctor only).
-    
-    Includes consultation notes, diagnosis, and prescription.
-    Automatically creates audit chain entry with hash.
-    
+    Create a complete medical record with notes, diagnosis, and prescription (Doctor only).
+
+    Combines consultation notes and prescription into a single record linked to an
+    appointment. An audit-chain entry with a SHA-256 hash is created atomically in
+    the same transaction.
+
+    Use this endpoint when you want to record all clinical details in one call.
+    For updating an existing record use PUT /consultation-notes/{record_id}.
+
     **Required Role:** Doctor
-    
-    Args:
-        db: Database session
-        current_user: Current authenticated doctor
-        
-    Returns:
-        Created medical record with audit hash
+    **Authorization:** Doctor must be assigned to the appointment
+    **Validates:** Requirements 8.1, 8.2 (medical record creation with blockchain hash)
     """
-    # TODO: Implement medical record creation with blockchain hash
-    return {}
+    logger.info(
+        f"Doctor {current_user.id} creating medical record for appointment {record_data.appointment_id}"
+    )
+
+    doctor = db.query(Doctor).filter(Doctor.user_id == current_user.id).first()
+    if not doctor:
+        logger.error(f"Doctor record not found for user {current_user.id}")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Doctor record not found"
+        )
+
+    appointment = db.query(Appointment).filter(Appointment.id == record_data.appointment_id).first()
+    if not appointment:
+        logger.warning(f"Appointment {record_data.appointment_id} not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Appointment not found"
+        )
+
+    if appointment.doctor_id != doctor.id:
+        logger.warning(
+            f"Doctor {doctor.id} attempted to create record for appointment {appointment.id} "
+            f"belonging to doctor {appointment.doctor_id}"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are not authorized to create records for this appointment"
+        )
+
+    existing = db.query(MedicalRecord).filter(
+        MedicalRecord.appointment_id == record_data.appointment_id
+    ).first()
+    if existing:
+        logger.warning(f"Medical record already exists for appointment {record_data.appointment_id}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A medical record already exists for this appointment. "
+                   "Use PUT /consultation-notes/{record_id} to update it."
+        )
+
+    medical_record = MedicalRecord(
+        patient_id=appointment.patient_id,
+        doctor_id=doctor.id,
+        appointment_id=appointment.id,
+        consultation_notes=record_data.consultation_notes,
+        diagnosis=record_data.diagnosis,
+        prescription=record_data.prescription,
+        version_number=1,
+        created_by=current_user.id,
+    )
+
+    try:
+        db.add(medical_record)
+        db.flush()
+
+        audit_entry = create_medical_record_audit_entry(db, medical_record, current_user.id)
+
+        db.commit()
+        db.refresh(medical_record)
+        background_tasks.add_task(_trigger_anomaly_check, db, current_user.id, audit_entry.id)
+        logger.info(
+            f"Created medical record {medical_record.id} for appointment {appointment.id}"
+        )
+        return medical_record
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error creating medical record: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create medical record"
+        )
 
 
 @router.put("/consultation-notes/{record_id}", response_model=ConsultationNoteResponse)
 async def update_consultation_note(
     record_id: int,
     update_data: MedicalRecordUpdate,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_doctor)
 ):
@@ -599,10 +707,11 @@ async def update_consultation_note(
         db.flush()  # Flush to get the ID without committing
         
         # Create audit chain entry in the same transaction
-        create_audit_entry(db, new_version, current_user.id)
-        
+        audit_entry = create_medical_record_audit_entry(db, new_version, current_user.id)
+
         db.commit()
         db.refresh(new_version)
+        background_tasks.add_task(_trigger_anomaly_check, db, current_user.id, audit_entry.id)
         logger.info(
             f"Created new version {new_version.id} (v{new_version.version_number}) "
             f"for record {record_id}"
@@ -621,6 +730,7 @@ async def update_consultation_note(
 async def update_prescription(
     record_id: int,
     update_data: PrescriptionUpdate,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_doctor)
 ):
@@ -703,10 +813,11 @@ async def update_prescription(
         db.flush()  # Flush to get the ID without committing
         
         # Create audit chain entry in the same transaction
-        create_audit_entry(db, new_version, current_user.id)
-        
+        audit_entry = create_medical_record_audit_entry(db, new_version, current_user.id)
+
         db.commit()
         db.refresh(new_version)
+        background_tasks.add_task(_trigger_anomaly_check, db, current_user.id, audit_entry.id)
         logger.info(
             f"Created new version {new_version.id} (v{new_version.version_number}) "
             f"for prescription {record_id}"

@@ -6,26 +6,26 @@
 -- USERS
 -- ============================================================================
 -- Password for all users: "password123" (hashed with bcrypt cost 12)
--- Hash: $2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5GyYqVr/qviu6
+-- Hash: $2b$12$RdKxgKYcGgvyJWayxnW3FutNNB6ZVgAtVs8qW4jKUpo5LGWf9bzgC
 
 INSERT INTO users (name, email, password_hash, role) VALUES
 -- Admin users
-('Admin User', 'admin@healthsaathi.com', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5GyYqVr/qviu6', 'Admin'),
+('Admin User', 'admin@healthsaathi.com', '$2b$12$RdKxgKYcGgvyJWayxnW3FutNNB6ZVgAtVs8qW4jKUpo5LGWf9bzgC', 'Admin'),
 
 -- Doctor users
-('Dr. Rajesh Kumar', 'rajesh.kumar@healthsaathi.com', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5GyYqVr/qviu6', 'Doctor'),
-('Dr. Priya Sharma', 'priya.sharma@healthsaathi.com', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5GyYqVr/qviu6', 'Doctor'),
-('Dr. Amit Patel', 'amit.patel@healthsaathi.com', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5GyYqVr/qviu6', 'Doctor'),
+('Dr. Rajesh Kumar', 'rajesh.kumar@healthsaathi.com', '$2b$12$RdKxgKYcGgvyJWayxnW3FutNNB6ZVgAtVs8qW4jKUpo5LGWf9bzgC', 'Doctor'),
+('Dr. Priya Sharma', 'priya.sharma@healthsaathi.com', '$2b$12$RdKxgKYcGgvyJWayxnW3FutNNB6ZVgAtVs8qW4jKUpo5LGWf9bzgC', 'Doctor'),
+('Dr. Amit Patel', 'amit.patel@healthsaathi.com', '$2b$12$RdKxgKYcGgvyJWayxnW3FutNNB6ZVgAtVs8qW4jKUpo5LGWf9bzgC', 'Doctor'),
 
 -- Nurse users
-('Nurse Anjali', 'anjali@healthsaathi.com', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5GyYqVr/qviu6', 'Nurse'),
-('Nurse Kavita', 'kavita@healthsaathi.com', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5GyYqVr/qviu6', 'Nurse'),
+('Nurse Anjali', 'anjali@healthsaathi.com', '$2b$12$RdKxgKYcGgvyJWayxnW3FutNNB6ZVgAtVs8qW4jKUpo5LGWf9bzgC', 'Nurse'),
+('Nurse Kavita', 'kavita@healthsaathi.com', '$2b$12$RdKxgKYcGgvyJWayxnW3FutNNB6ZVgAtVs8qW4jKUpo5LGWf9bzgC', 'Nurse'),
 
 -- Patient users
-('Rahul Verma', 'rahul.verma@example.com', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5GyYqVr/qviu6', 'Patient'),
-('Sneha Gupta', 'sneha.gupta@example.com', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5GyYqVr/qviu6', 'Patient'),
-('Vikram Singh', 'vikram.singh@example.com', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5GyYqVr/qviu6', 'Patient'),
-('Meera Reddy', 'meera.reddy@example.com', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5GyYqVr/qviu6', 'Patient');
+('Rahul Verma', 'rahul.verma@example.com', '$2b$12$RdKxgKYcGgvyJWayxnW3FutNNB6ZVgAtVs8qW4jKUpo5LGWf9bzgC', 'Patient'),
+('Sneha Gupta', 'sneha.gupta@example.com', '$2b$12$RdKxgKYcGgvyJWayxnW3FutNNB6ZVgAtVs8qW4jKUpo5LGWf9bzgC', 'Patient'),
+('Vikram Singh', 'vikram.singh@example.com', '$2b$12$RdKxgKYcGgvyJWayxnW3FutNNB6ZVgAtVs8qW4jKUpo5LGWf9bzgC', 'Patient'),
+('Meera Reddy', 'meera.reddy@example.com', '$2b$12$RdKxgKYcGgvyJWayxnW3FutNNB6ZVgAtVs8qW4jKUpo5LGWf9bzgC', 'Patient');
 
 -- ============================================================================
 -- PATIENTS
@@ -93,33 +93,11 @@ INSERT INTO medical_records (patient_id, doctor_id, appointment_id, consultation
 -- ============================================================================
 -- AUDIT CHAIN
 -- ============================================================================
-
--- Genesis block
-INSERT INTO audit_chain (record_id, record_type, record_data, hash, previous_hash, user_id, is_tampered) VALUES
-(0, 'genesis', '{"message": "Genesis block for HealthSaathi audit chain"}', 
- '0000000000000000000000000000000000000000000000000000000000000000',
- '0',
- 1, FALSE);
-
--- Sample audit entries for medical records
-INSERT INTO audit_chain (record_id, record_type, record_data, hash, previous_hash, user_id, is_tampered) VALUES
-(1, 'medical_record', 
- '{"patient_id": 1, "doctor_id": 1, "diagnosis": "Viral Fever", "timestamp": "2026-02-27T10:30:00Z"}',
- 'a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1v2w3x4y5z6a7b8c9d0e1f2',
- '0000000000000000000000000000000000000000000000000000000000000000',
- 2, FALSE),
-
-(2, 'medical_record',
- '{"patient_id": 2, "doctor_id": 2, "diagnosis": "Upper Respiratory Tract Infection", "timestamp": "2026-02-27T11:00:00Z"}',
- 'b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1v2w3x4y5z6a7b8c9d0e1f2g3',
- 'a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1v2w3x4y5z6a7b8c9d0e1f2',
- 3, FALSE),
-
-(3, 'medical_record',
- '{"patient_id": 3, "doctor_id": 1, "diagnosis": "Viral Fever - Resolved", "timestamp": "2026-02-27T14:30:00Z"}',
- 'c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1v2w3x4y5z6a7b8c9d0e1f2g3h4',
- 'b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1v2w3x4y5z6a7b8c9d0e1f2g3',
- 2, FALSE);
+-- NOTE: Audit chain entries are NOT pre-seeded.
+-- Real SHA-256 hash-linked entries are created automatically by the backend
+-- whenever medical records or appointments are created/updated via the API.
+-- Pre-seeding with fake hashes would make all entries show as tampered.
+-- Create entries by using the API after loading this data.
 
 -- ============================================================================
 -- VERIFICATION QUERIES

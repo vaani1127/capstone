@@ -1,7 +1,7 @@
 """
 Appointment management endpoints
 """
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from datetime import datetime
@@ -15,21 +15,51 @@ from app.core.dependencies import get_current_user, require_staff, require_patie
 from app.schemas.appointment import (
     AppointmentCreate,
     AppointmentResponse,
+    AppointmentUpdate,
     AppointmentWithDetails,
     RescheduleRequest,
     WalkInCreate,
     StatusUpdateRequest
 )
+from app.models.audit_chain import AuditChain
 from app.services.appointment_service import AppointmentService
 
 router = APIRouter()
+
+
+async def _trigger_anomaly_check(db, user_id: int, audit_entry_id: int):
+    try:
+        from app.services.anomaly_service import analyze_and_alert
+        from app.services.websocket_manager import manager
+        alert = analyze_and_alert(db, user_id, audit_entry_id)
+        if alert and alert.severity in ("MEDIUM", "HIGH"):
+            payload = {
+                "type": "anomaly_alert",
+                "severity": alert.severity,
+                "alert_id": alert.id,
+                "user_id": alert.user_id,
+                "anomaly_score": float(alert.anomaly_score),
+                "explanation": alert.explanation,
+                "top_features": alert.top_features,
+                "timestamp": alert.created_at.isoformat()
+            }
+            import asyncio
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    asyncio.ensure_future(manager.broadcast_anomaly_alert(payload))
+            except Exception:
+                pass
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Anomaly check failed: {e}")
 
 
 @router.get("/", response_model=List[AppointmentWithDetails])
 async def list_appointments(
     patient_id: Optional[int] = None,
     doctor_id: Optional[int] = None,
-    status: Optional[str] = None,
+    appointment_status: Optional[str] = None,
     start_date: Optional[datetime] = None,
     end_date: Optional[datetime] = None,
     db: Session = Depends(get_db),
@@ -65,9 +95,9 @@ async def list_appointments(
     """
     # Convert status string to enum if provided
     status_enum = None
-    if status:
+    if appointment_status:
         try:
-            status_enum = AppointmentStatus(status)
+            status_enum = AppointmentStatus(appointment_status)
         except ValueError:
             raise HTTPException(
                 status_code=400,
@@ -168,6 +198,7 @@ async def list_appointments(
 @router.post("/", response_model=AppointmentWithDetails, status_code=status.HTTP_201_CREATED)
 async def create_appointment(
     appointment_data: AppointmentCreate,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_patient)
 ):
@@ -209,7 +240,13 @@ async def create_appointment(
         patient_id=patient.id,
         appointment_data=appointment_data
     )
-    
+
+    audit_entry = db.query(AuditChain).filter(
+        AuditChain.record_id == appointment.id
+    ).order_by(AuditChain.id.desc()).first()
+    if audit_entry:
+        background_tasks.add_task(_trigger_anomaly_check, db, current_user.id, audit_entry.id)
+
     # Get doctor details
     doctor = db.query(Doctor).filter(Doctor.id == appointment.doctor_id).first()
     
@@ -326,36 +363,104 @@ async def reschedule_appointment(
     return response
 
 
-@router.put("/{appointment_id}", response_model=dict)
+@router.put("/{appointment_id}", response_model=AppointmentWithDetails)
 async def update_appointment(
     appointment_id: int,
+    update_data: AppointmentUpdate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """
-    Update appointment (reschedule or change status).
-    
-    - Patients can reschedule their own appointments
-    - Staff can update appointment status
-    
-    **Required Role:** Any authenticated user
-    **Authorization:** Ownership or staff role verified
-    
-    Args:
-        appointment_id: ID of appointment to update
-        db: Database session
-        current_user: Current authenticated user
-        
-    Returns:
-        Updated appointment details
+    General appointment update endpoint.
+
+    Dispatches to reschedule or status-update based on which field is provided:
+    - `scheduled_time` → reschedule (patients may update their own; staff may update any)
+    - `status` → status transition (staff only: Doctor, Nurse, Admin)
+    - Both fields at once → 400 (ambiguous; use the dedicated sub-endpoints instead)
+
+    **Required Role:** Any authenticated user (RBAC enforced per operation)
+    **Validates:** Requirements 6.1, 6.2, 7.2
     """
-    # TODO: Implement appointment update logic with ownership check
-    return {}
+    if update_data.scheduled_time is not None and update_data.status is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Provide either scheduled_time or status, not both. "
+                   "Use PUT /{id}/reschedule or PATCH /{id}/status for dedicated operations."
+        )
+
+    if update_data.scheduled_time is None and update_data.status is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Provide at least one field to update: scheduled_time or status."
+        )
+
+    if update_data.scheduled_time is not None:
+        # Patients can reschedule their own; staff can reschedule any.
+        # AppointmentService.reschedule_appointment already enforces ownership and future-date.
+        appointment = AppointmentService.reschedule_appointment(
+            db=db,
+            appointment_id=appointment_id,
+            new_scheduled_time=update_data.scheduled_time,
+            user_id=current_user.id,
+            user_role=current_user.role.value
+        )
+    else:
+        # Status transitions are staff-only.
+        if current_user.role == UserRole.PATIENT:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Patients cannot update appointment status. "
+                       "Use PUT /{id}/reschedule to change the scheduled time."
+            )
+        appointment = AppointmentService.update_appointment_status(
+            db=db,
+            appointment_id=appointment_id,
+            new_status=update_data.status,
+            user_id=current_user.id,
+            user_role=current_user.role.value
+        )
+
+    # Build response with details
+    patient = db.query(Patient).filter(Patient.id == appointment.patient_id).first()
+    doctor = db.query(Doctor).filter(Doctor.id == appointment.doctor_id).first()
+
+    patient_name = patient.user.name if patient and patient.user else None
+    doctor_name = doctor.user.name if doctor and doctor.user else None
+    doctor_specialization = doctor.specialization if doctor else None
+
+    estimated_wait_time = None
+    if appointment.queue_position and appointment.status in [
+        AppointmentStatus.SCHEDULED,
+        AppointmentStatus.CHECKED_IN,
+        AppointmentStatus.IN_PROGRESS
+    ]:
+        estimated_wait_time = AppointmentService.calculate_estimated_wait_time(
+            db=db,
+            doctor_id=appointment.doctor_id,
+            queue_position=appointment.queue_position
+        )
+
+    return AppointmentWithDetails(
+        id=appointment.id,
+        patient_id=appointment.patient_id,
+        doctor_id=appointment.doctor_id,
+        scheduled_time=appointment.scheduled_time,
+        status=appointment.status,
+        appointment_type=appointment.appointment_type,
+        queue_position=appointment.queue_position,
+        created_at=appointment.created_at,
+        updated_at=appointment.updated_at,
+        patient_name=patient_name,
+        doctor_name=doctor_name,
+        doctor_specialization=doctor_specialization,
+        estimated_wait_time=estimated_wait_time
+    )
 
 
 @router.delete("/{appointment_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def cancel_appointment(
     appointment_id: int,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -383,13 +488,19 @@ async def cancel_appointment(
         400: Appointment already cancelled or within 2-hour window
     """
     # Cancel appointment using service
-    AppointmentService.cancel_appointment(
+    cancelled = AppointmentService.cancel_appointment(
         db=db,
         appointment_id=appointment_id,
         user_id=current_user.id,
         user_role=current_user.role.value
     )
-    
+
+    audit_entry = db.query(AuditChain).filter(
+        AuditChain.record_id == cancelled.id
+    ).order_by(AuditChain.id.desc()).first()
+    if audit_entry:
+        background_tasks.add_task(_trigger_anomaly_check, db, current_user.id, audit_entry.id)
+
     # Return 204 No Content on success
     return None
 
@@ -398,6 +509,7 @@ async def cancel_appointment(
 async def update_appointment_status(
     appointment_id: int,
     status_data: StatusUpdateRequest,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -438,22 +550,28 @@ async def update_appointment_status(
         user_id=current_user.id,
         user_role=current_user.role.value
     )
-    
+
+    audit_entry = db.query(AuditChain).filter(
+        AuditChain.record_id == appointment.id
+    ).order_by(AuditChain.id.desc()).first()
+    if audit_entry:
+        background_tasks.add_task(_trigger_anomaly_check, db, current_user.id, audit_entry.id)
+
     # Get patient and doctor details
     patient = db.query(Patient).filter(Patient.id == appointment.patient_id).first()
     doctor = db.query(Doctor).filter(Doctor.id == appointment.doctor_id).first()
-    
+
     patient_name = None
     if patient and patient.user:
         patient_name = patient.user.name
-    
+
     doctor_name = None
     doctor_specialization = None
     if doctor:
         if doctor.user:
             doctor_name = doctor.user.name
         doctor_specialization = doctor.specialization
-    
+
     # Calculate estimated wait time (if still in queue)
     estimated_wait_time = None
     if appointment.queue_position and appointment.status in [
@@ -466,7 +584,7 @@ async def update_appointment_status(
             doctor_id=appointment.doctor_id,
             queue_position=appointment.queue_position
         )
-    
+
     # Build response with details
     response = AppointmentWithDetails(
         id=appointment.id,
@@ -483,13 +601,14 @@ async def update_appointment_status(
         doctor_specialization=doctor_specialization,
         estimated_wait_time=estimated_wait_time
     )
-    
+
     return response
 
 
 @router.post("/walk-in", response_model=AppointmentWithDetails, status_code=status.HTTP_201_CREATED)
 async def register_walk_in(
     walk_in_data: WalkInCreate,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.NURSE))
 ):
@@ -530,7 +649,13 @@ async def register_walk_in(
         address=walk_in_data.address,
         blood_group=walk_in_data.blood_group
     )
-    
+
+    audit_entry = db.query(AuditChain).filter(
+        AuditChain.record_id == appointment.id
+    ).order_by(AuditChain.id.desc()).first()
+    if audit_entry:
+        background_tasks.add_task(_trigger_anomaly_check, db, current_user.id, audit_entry.id)
+
     # Get doctor details
     doctor = db.query(Doctor).filter(Doctor.id == appointment.doctor_id).first()
     

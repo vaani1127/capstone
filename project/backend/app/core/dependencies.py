@@ -78,7 +78,15 @@ async def get_current_user(
             detail="User not found",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
+
+    if not user.is_active:
+        logger.warning(f"Inactive user attempted login: {user.email} (ID: {user.id})")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Account is deactivated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     logger.debug(f"Authenticated user: {user.email} (ID: {user.id})")
     return user
 

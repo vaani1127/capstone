@@ -1,10 +1,13 @@
 """
 Main FastAPI application entry point
 """
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 import logging
+import uuid
+import time
 
 from app.core.config import settings
 from app.api.v1.router import api_router
@@ -51,20 +54,67 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Configure CORS - Allow all origins for development
+# Configure CORS — origins driven by ALLOWED_ORIGINS env variable.
+# Set ALLOWED_ORIGINS to specific domains in production (comma-separated).
+# allow_credentials requires specific origins; wildcard "*" disables it.
+_cors_origins = settings.cors_origins
+_allow_credentials = _cors_origins != ["*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins for development/testing
-    allow_credentials=True,
+    allow_origins=_cors_origins,
+    allow_credentials=_allow_credentials,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=["*"],
     expose_headers=["*"],
     max_age=3600,
 )
 
+# ---------------------------------------------------------------------------
+# Request size guard — reject bodies larger than 10 MB at the app layer.
+# Nginx also enforces client_max_body_size 10M; this is a defence-in-depth layer.
+# ---------------------------------------------------------------------------
+_MAX_BODY_BYTES = 10 * 1024 * 1024  # 10 MB
+
+@app.middleware("http")
+async def limit_request_size(request: Request, call_next):
+    content_length = request.headers.get("Content-Length")
+    if content_length and int(content_length) > _MAX_BODY_BYTES:
+        return JSONResponse(
+            status_code=413,
+            content={"detail": "Request body too large. Maximum allowed size is 10 MB."},
+        )
+    return await call_next(request)
+
+
+# ---------------------------------------------------------------------------
+# Request tracing — attaches a UUID to every request and response.
+# Logs path only (never query strings, which may contain tokens).
+# ---------------------------------------------------------------------------
+@app.middleware("http")
+async def add_request_id(request: Request, call_next):
+    request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+    request.state.request_id = request_id
+    start = time.perf_counter()
+    response = await call_next(request)
+    duration_ms = round((time.perf_counter() - start) * 1000)
+    response.headers["X-Request-ID"] = request_id
+    logger.info(
+        "request",
+        extra={
+            "request_id": request_id,
+            "method": request.method,
+            "path": request.url.path,
+            "status": response.status_code,
+            "duration_ms": duration_ms,
+        },
+    )
+    return response
+
+
 # Security headers middleware
 @app.middleware("http")
-async def add_security_headers(request, call_next):
+async def add_security_headers(request: Request, call_next):
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
@@ -72,18 +122,56 @@ async def add_security_headers(request, call_next):
     response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     return response
 
+
+# ---------------------------------------------------------------------------
+# Global exception handler — logs unhandled errors with request ID.
+# ---------------------------------------------------------------------------
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    request_id = getattr(request.state, "request_id", "unknown")
+    logger.error(
+        "Unhandled exception",
+        exc_info=exc,
+        extra={"request_id": request_id, "path": str(request.url)},
+    )
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error", "request_id": request_id},
+    )
+
+
 # Include API router
 app.include_router(api_router, prefix="/api/v1")
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint with database status"""
+    """Liveness probe — returns 200 while the process is running."""
     db_healthy = check_db_connection()
     return {
         "status": "healthy" if db_healthy else "unhealthy",
         "version": settings.VERSION,
-        "database": "connected" if db_healthy else "disconnected"
+        "database": "connected" if db_healthy else "disconnected",
     }
+
+
+@app.get("/ready")
+async def readiness_check():
+    """
+    Readiness probe — returns 200 only when the service can handle traffic.
+
+    Checks that:
+    - The database connection is alive
+    Returns 503 if any dependency is unavailable so that load balancers
+    and k8s readiness probes can stop routing traffic to this instance.
+    """
+    db_ok = check_db_connection()
+    if not db_ok:
+        return JSONResponse(
+            status_code=503,
+            content={"status": "not ready", "reason": "database unavailable"},
+        )
+    return {"status": "ready", "version": settings.VERSION}
+
 
 @app.get("/")
 async def root():
@@ -91,5 +179,5 @@ async def root():
     return {
         "message": "HealthSaathi API",
         "version": settings.VERSION,
-        "docs": "/api/docs"
+        "docs": "/api/docs",
     }
