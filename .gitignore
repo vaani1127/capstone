@@ -24,3 +24,7 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+
+# ML model binaries
+*.pkl
+project/backend/seed_from_csv.py
