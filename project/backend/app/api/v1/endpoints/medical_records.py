@@ -169,10 +169,11 @@ async def get_patient_records(
                 detail="Doctor record not found"
             )
         
-        # Check if doctor has treated this patient (has any medical records for them)
+        # Check if doctor has treated this patient (has any non-deleted medical records for them)
         has_treated = db.query(MedicalRecord).filter(
             MedicalRecord.patient_id == patient_id,
-            MedicalRecord.doctor_id == doctor.id
+            MedicalRecord.doctor_id == doctor.id,
+            MedicalRecord.is_deleted == False
         ).first() is not None
         
         if not has_treated:
@@ -205,9 +206,10 @@ async def get_patient_records(
     from sqlalchemy import func
     from sqlalchemy.sql import and_
     
-    # Get all records for the patient
+    # Get all records for the patient (exclude soft-deleted)
     all_records = db.query(MedicalRecord).filter(
-        MedicalRecord.patient_id == patient_id
+        MedicalRecord.patient_id == patient_id,
+        MedicalRecord.is_deleted == False
     ).all()
     
     # Group by appointment_id and find latest version
@@ -910,7 +912,8 @@ async def get_record_versions(
         # Check if doctor has treated this patient
         has_treated = db.query(MedicalRecord).filter(
             MedicalRecord.patient_id == patient_id,
-            MedicalRecord.doctor_id == doctor.id
+            MedicalRecord.doctor_id == doctor.id,
+            MedicalRecord.is_deleted == False
         ).first() is not None
         
         if not has_treated:
@@ -940,9 +943,10 @@ async def get_record_versions(
     all_versions = []
     
     if record.appointment_id:
-        # Get all records with the same appointment_id
+        # Get all non-deleted records with the same appointment_id
         all_versions = db.query(MedicalRecord).filter(
-            MedicalRecord.appointment_id == record.appointment_id
+            MedicalRecord.appointment_id == record.appointment_id,
+            MedicalRecord.is_deleted == False
         ).order_by(MedicalRecord.version_number).all()
     else:
         # For records without appointment_id, traverse the version chain
@@ -1010,3 +1014,96 @@ async def get_record_versions(
     
     logger.info(f"Returning {len(response_versions)} versions for record {record_id}")
     return response_versions
+
+
+@router.delete("/{record_id}", status_code=status.HTTP_200_OK)
+async def soft_delete_medical_record(
+    record_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Soft-delete a medical record (Doctor who created it, or Admin).
+
+    Medical records are NEVER hard-deleted — the row is preserved to maintain
+    blockchain audit chain integrity. This endpoint sets is_deleted=True and
+    writes an audit chain block of type 'medical_record_deleted'.
+
+    **Required Role:** Doctor (own records only) or Admin (any record)
+
+    Args:
+        record_id: ID of the medical record to soft-delete
+        db: Database session
+        current_user: Current authenticated user
+
+    Returns:
+        Confirmation message and the record_id
+
+    Raises:
+        HTTPException 404: If record not found or already deleted
+        HTTPException 403: If user is not authorized to delete this record
+    """
+    from datetime import datetime
+    from app.services.blockchain_service import create_audit_entry
+
+    logger.info(f"User {current_user.id} requesting soft-delete for medical record {record_id}")
+
+    # Fetch the record (include soft-deleted to give a clean 404 vs 403)
+    record = db.query(MedicalRecord).filter(MedicalRecord.id == record_id).first()
+    if not record:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Medical record not found")
+
+    if record.is_deleted:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Medical record not found")
+
+    # Authorization: Doctor can only soft-delete their own records; Admin can delete any
+    if current_user.role == UserRole.DOCTOR:
+        doctor = db.query(Doctor).filter(Doctor.user_id == current_user.id).first()
+        if not doctor or record.doctor_id != doctor.id:
+            logger.warning(
+                f"Doctor {current_user.id} attempted to delete record {record_id} they do not own"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You can only delete medical records you created"
+            )
+    elif current_user.role != UserRole.ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only doctors (own records) or admins can delete medical records"
+        )
+
+    try:
+        # Soft-delete: mark the record, record who deleted it and when
+        record.is_deleted = True
+        record.deleted_at = datetime.utcnow()
+        record.deleted_by = current_user.id
+        db.flush()
+
+        # Write a blockchain audit entry for this deletion (same transaction)
+        create_audit_entry(
+            db,
+            record_id=record.id,
+            record_type="medical_record_deleted",
+            record_data={
+                "patient_id": record.patient_id,
+                "doctor_id": record.doctor_id,
+                "version_number": record.version_number,
+                "deleted_by": current_user.id,
+            },
+            user_id=current_user.id
+        )
+
+        db.commit()
+        logger.info(f"Soft-deleted medical record {record_id} by user {current_user.id}")
+        return {"detail": "Medical record deleted", "record_id": record_id}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error soft-deleting medical record {record_id}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to delete medical record"
+        )

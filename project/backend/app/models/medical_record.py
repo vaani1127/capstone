@@ -1,7 +1,7 @@
 """
 Medical record model for storing consultation notes and prescriptions with versioning
 """
-from sqlalchemy import Column, Integer, Text, ForeignKey
+from sqlalchemy import Column, Integer, Text, ForeignKey, Boolean, DateTime
 from sqlalchemy.orm import relationship
 
 from app.db.base import BaseModel
@@ -44,6 +44,11 @@ class MedicalRecord(BaseModel):
     version_number = Column(Integer, default=1, nullable=False)
     parent_record_id = Column(Integer, ForeignKey("medical_records.id", ondelete="SET NULL"), index=True)
     created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"))
+
+    # Soft-delete fields — medical records are NEVER hard-deleted (preserves audit chain)
+    is_deleted = Column(Boolean, nullable=False, default=False, server_default="false")
+    deleted_at = Column(DateTime, nullable=True)
+    deleted_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     
     # Relationships
     patient = relationship("Patient", back_populates="medical_records")

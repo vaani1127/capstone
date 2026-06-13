@@ -46,6 +46,10 @@ class User(BaseModel):
         index=True
     )
     is_active = Column(Boolean, nullable=False, default=True, server_default="true")
+    # token_version: increment this to instantly invalidate all previously issued JWTs
+    # for this user (e.g. on account deactivation or forced logout of all sessions).
+    token_version = Column(Integer, nullable=False, default=1, server_default="1")
+
     
     # Relationships
     patient = relationship("Patient", back_populates="user", uselist=False, cascade="all, delete-orphan")
