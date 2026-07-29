@@ -1,10 +1,17 @@
 """
 Procedure schemas for request/response validation
 """
+import bleach
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+
+def _strip_html(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return value
+    return bleach.clean(value, tags=[], attributes={}, strip=True)
 
 
 class ProcedureCreate(BaseModel):
@@ -18,6 +25,11 @@ class ProcedureCreate(BaseModel):
     outcome: Optional[str] = Field(None, description="Clinical outcome or result")
     base_cost: Optional[float] = Field(None, ge=0, description="List price before insurance")
     notes: Optional[str] = Field(None, description="Free-text clinical notes")
+
+    @field_validator('description', 'outcome', 'notes', mode='before')
+    @classmethod
+    def sanitize_text(cls, value: Optional[str]) -> Optional[str]:
+        return _strip_html(value)
 
 
 class ProcedureResponse(BaseModel):

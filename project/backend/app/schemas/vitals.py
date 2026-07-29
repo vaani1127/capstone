@@ -1,10 +1,11 @@
 """
 Vitals schemas for request/response validation
 """
+import bleach
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class VitalsCreate(BaseModel):
@@ -20,6 +21,13 @@ class VitalsCreate(BaseModel):
     weight_kg: Optional[float] = Field(None, gt=0, le=700, description="Weight in kilograms")
     height_cm: Optional[float] = Field(None, gt=0, le=300, description="Height in centimetres")
     notes: Optional[str] = Field(None, description="Free-text clinical notes")
+
+    @field_validator('notes', mode='before')
+    @classmethod
+    def sanitize_text(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return value
+        return bleach.clean(value, tags=[], attributes={}, strip=True)
 
 
 class VitalsResponse(BaseModel):

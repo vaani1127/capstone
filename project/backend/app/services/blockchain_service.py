@@ -50,7 +50,7 @@ def generate_hash(
         'previous_hash': previous_hash
     }
 
-    hash_string = json.dumps(hash_input, sort_keys=True, ensure_ascii=True)
+    hash_string = json.dumps(hash_input, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(hash_string.encode('utf-8')).hexdigest()
 
 

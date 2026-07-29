@@ -8,8 +8,12 @@ from contextlib import asynccontextmanager
 import logging
 import uuid
 import time
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 
 from app.core.config import settings
+from app.core.limiter import limiter
 from app.api.v1.router import api_router
 from app.db import check_db_connection, close_db_connection
 
@@ -54,16 +58,37 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Configure CORS — origins driven by ALLOWED_ORIGINS env variable.
-# Set ALLOWED_ORIGINS to specific domains in production (comma-separated).
-# allow_credentials requires specific origins; wildcard "*" disables it.
+# Rate limiting
+app.state.limiter = limiter
+app.add_middleware(SlowAPIMiddleware)
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
+    return JSONResponse(
+        status_code=429,
+        content={"error": "Too many requests, slow down"},
+    )
+
+# Configure CORS.
+# cors_origins raises RuntimeError at import time in production if
+# ALLOWED_ORIGINS is missing or contains a wildcard — intentional: the
+# app must not start with an open CORS policy.
 _cors_origins = settings.cors_origins
-_allow_credentials = _cors_origins != ["*"]
+
+# Warn loudly when ENVIRONMENT=production but DEBUG=True. is_development()
+# returns True whenever DEBUG=True regardless of ENVIRONMENT, silently
+# bypassing the production CORS lockdown and other production safeguards.
+if settings.ENVIRONMENT.lower() == "production" and settings.DEBUG:
+    logger.warning(
+        "MISCONFIGURATION: ENVIRONMENT=production but DEBUG=True. "
+        "This bypasses the production CORS lockdown and other production "
+        "safeguards. Set DEBUG=False immediately."
+    )
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
-    allow_credentials=_allow_credentials,
+    allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=["*"],
     expose_headers=["*"],

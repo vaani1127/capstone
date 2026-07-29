@@ -32,19 +32,52 @@ class Settings(BaseSettings):
             )
         return v
     
-    # CORS
-    ALLOWED_ORIGINS: str = "*"
-    
+    # CORS — never set to "*" in production (see cors_origins property below)
+    ALLOWED_ORIGINS: str = ""
+
     # Environment
     ENVIRONMENT: str = "development"
     DEBUG: bool = False
-    
+
+    _DEV_ORIGINS: List[str] = [
+        "http://localhost:3000",
+        "http://localhost:8000",
+        "http://localhost:8080",
+    ]
+
+    @property
+    def is_development(self) -> bool:
+        return self.ENVIRONMENT.lower() == "development" or self.DEBUG
+
     @property
     def cors_origins(self) -> List[str]:
-        """Get CORS origins as a list"""
-        if isinstance(self.ALLOWED_ORIGINS, str):
-            return [origin.strip() for origin in self.ALLOWED_ORIGINS.split(",")]
-        return [self.ALLOWED_ORIGINS]
+        """
+        Return the list of allowed CORS origins.
+
+        Development  → fixed localhost origins, no config required.
+        Production   → read from ALLOWED_ORIGINS env var (comma-separated).
+                       Raises RuntimeError at startup if the var is absent or
+                       empty so the app never starts with an open CORS policy.
+        Wildcards are rejected in all environments.
+        """
+        if self.is_development:
+            return self._DEV_ORIGINS
+
+        # Production path
+        raw = self.ALLOWED_ORIGINS.strip()
+        if not raw:
+            raise RuntimeError(
+                "ALLOWED_ORIGINS must be set to a non-empty comma-separated list "
+                "of origins in production. The app will not start without it."
+            )
+
+        origins = [o.strip() for o in raw.split(",") if o.strip()]
+        if "*" in origins:
+            raise RuntimeError(
+                "Wildcard '*' is not permitted in ALLOWED_ORIGINS. "
+                "Provide explicit origin URLs."
+            )
+        return origins
     
     class Config:
         from pathlib import Path

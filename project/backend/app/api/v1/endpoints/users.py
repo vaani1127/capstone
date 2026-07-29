@@ -185,6 +185,7 @@ async def deactivate_user(
         )
 
     user.is_active = False
+    user.token_version = (user.token_version or 0) + 1
     user.updated_at = datetime.utcnow()
     db.flush()
 

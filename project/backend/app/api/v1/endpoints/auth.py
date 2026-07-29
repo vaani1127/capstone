@@ -1,7 +1,8 @@
 """
 Authentication endpoints for user registration and login
 """
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 import logging
@@ -10,6 +11,8 @@ from app.db.session import get_db
 from app.schemas.user import UserCreate, UserResponse, UserLogin, TokenResponse, TokenRefresh
 from app.models.user import User
 from app.core.security import get_password_hash, verify_password, create_access_token, create_refresh_token, decode_token
+from app.core.dependencies import get_current_user, BLACKLISTED_TOKENS
+from app.core.limiter import limiter
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +20,9 @@ router = APIRouter()
 
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit("3/minute")
 async def register_user(
+    request: Request,
     user_data: UserCreate,
     db: Session = Depends(get_db)
 ):
@@ -85,7 +90,9 @@ async def register_user(
 
 
 @router.post("/login", response_model=TokenResponse)
+@limiter.limit("5/minute")
 async def login_user(
+    request: Request,
     login_data: UserLogin,
     db: Session = Depends(get_db)
 ):
@@ -119,9 +126,10 @@ async def login_user(
         token_data = {
             "user_id": user.id,
             "email": user.email,
-            "role": user.role.value
+            "role": user.role.value,
+            "token_version": user.token_version,
         }
-        
+
         access_token = create_access_token(data=token_data)
         refresh_token = create_refresh_token(data=token_data)
         
@@ -200,14 +208,28 @@ async def refresh_token(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="User not found"
             )
-        
+
+        # Verify the refresh token has not been revoked.
+        # token_version is bumped on password change / session revocation;
+        # a stale refresh token must be rejected even if its signature is valid.
+        token_version: int = payload.get("token_version", 0)
+        if token_version != user.token_version:
+            logger.warning(
+                f"Revoked refresh token used by user {user.email} (ID: {user.id})"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token has been revoked"
+            )
+
         # Generate new tokens
         new_token_data = {
             "user_id": user.id,
             "email": user.email,
-            "role": user.role.value
+            "role": user.role.value,
+            "token_version": user.token_version,
         }
-        
+
         access_token = create_access_token(data=new_token_data)
         refresh_token = create_refresh_token(data=new_token_data)
         
@@ -228,3 +250,25 @@ async def refresh_token(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An error occurred during token refresh"
         )
+
+
+_bearer = HTTPBearer()
+
+
+@router.post("/logout")
+async def logout(
+    credentials: HTTPAuthorizationCredentials = Depends(_bearer),
+    _current_user: User = Depends(get_current_user),
+):
+    """
+    Logout the current user by blacklisting the token's JTI.
+
+    get_current_user already validates the token, so by the time we reach
+    this handler the token is guaranteed to be valid and not already revoked.
+    """
+    payload = decode_token(credentials.credentials)
+    jti: str | None = payload.get("jti") if payload else None
+    if jti:
+        BLACKLISTED_TOKENS.add(jti)
+        logger.info(f"Token JTI blacklisted for user ID {_current_user.id}: {jti}")
+    return {"message": "Logged out successfully"}

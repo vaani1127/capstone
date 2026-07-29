@@ -59,8 +59,17 @@ class AuthService {
     return user;
   }
 
-  /// Logout the current user
+  /// Logout the current user.
+  ///
+  /// Calls the backend to blacklist the token's JTI before clearing local
+  /// state, so a stolen access token can't be replayed after logout.
   Future<void> logout() async {
+    try {
+      await _apiClient.post('/auth/logout', {});
+    } catch (_) {
+      // Local logout should still proceed even if the backend call fails
+      // (e.g. token already expired, no connectivity).
+    }
     await _apiClient.clearToken();
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(AppConfig.userKey);

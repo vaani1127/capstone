@@ -30,8 +30,9 @@ import numpy as np
 from sklearn.ensemble import IsolationForest
 import shap
 
-from app.models.anomaly_alert import AnomalyAlert
+from app.models.anomaly_alert import AnomalyAlert, TRIGGER_SINGLE_EVENT, TRIGGER_SUSTAINED_TREND
 from app.models.audit_chain import AuditChain
+from app.models.behavioral_score import BehavioralScore
 from app.models.user import User
 from app.models.appointment import Appointment
 
@@ -61,6 +62,25 @@ FEATURE_ORDER: List[str] = [
     "session_duration_minutes",
 ]
 
+# Per-role normal-behaviour baselines: mean of each continuous feature across
+# is_anomaly=0 rows, computed from the training dataset (09_audit_logs_synthetic.csv).
+# Used as reference points in the rule-based fallback explanation when SHAP is
+# unavailable.  Update these if the model is retrained on a new dataset.
+_ROLE_BASELINES: Dict[str, Dict[str, float]] = {
+    "Admin":   {"actions_per_hour": 8.0,  "unique_patients_accessed": 4.1,  "session_duration_minutes": 37.8},
+    "Doctor":  {"actions_per_hour": 14.9, "unique_patients_accessed": 10.4, "session_duration_minutes": 39.9},
+    "Nurse":   {"actions_per_hour": 19.7, "unique_patients_accessed": 16.2, "session_duration_minutes": 40.5},
+    "Patient": {"actions_per_hour": 3.4,  "unique_patients_accessed": 2.0,  "session_duration_minutes": 40.2},
+}
+
+
+# Trend-detection parameters for sustained-elevation escalation.
+# A MEDIUM alert is raised when all of the last TREND_WINDOW scores exceed
+# TREND_THRESHOLD, provided no escalation alert already exists for this user
+# within the last TREND_DEDUP_DAYS days.
+TREND_WINDOW:     int   = 7      # number of consecutive recent scores required
+TREND_THRESHOLD:  float = 0.35   # minimum score for each of those entries
+TREND_DEDUP_DAYS: int   = 7      # rolling window in which only one escalation fires
 
 # ---------------------------------------------------------------------------
 # SECTION 2: Feature extraction
@@ -394,6 +414,101 @@ def explain_event(features: dict, role: str, db: Session) -> List[dict]:
 
 
 # ---------------------------------------------------------------------------
+# SECTION 7b: Rule-based fallback explanation (used when SHAP is unavailable)
+# ---------------------------------------------------------------------------
+
+def fallback_feature_explanation(
+    features: dict,
+    role: str,
+    user_name: str,
+    anomaly_score: float,
+) -> str:
+    """
+    Produce a plain-English alert explanation directly from raw feature values
+    when SHAP attribution is unavailable (e.g. explainer failure, empty result).
+
+    Compares each feature against the per-role normal baseline in _ROLE_BASELINES
+    and emits a human-readable phrase for every feature that is meaningfully
+    elevated.  Falls back to a generic sentence only if no feature crosses its
+    threshold — in practice this should be rare given the anomaly score already
+    exceeded 0.50.
+
+    Args:
+        features:      Feature dict from extract_features().
+        role:          Plain-string role name ("Doctor", "Admin", …).
+        user_name:     Display name of the flagged user.
+        anomaly_score: Normalised anomaly score (0–1).
+
+    Returns:
+        Single alert string, e.g.:
+        "Alert — Alice [Nurse] scored 82% anomaly (rule-based). Detected:
+         activity volume (61 actions/hr) was 3.1x above typical Nurse baseline
+         (~20 actions/hr); performed actions inconsistent with Nurse role
+         permissions."
+    """
+    baselines = _ROLE_BASELINES.get(role, {})
+    parts: List[str] = []
+
+    # --- Volume: actions_per_hour vs role baseline
+    aph = features.get("actions_per_hour", 0.0)
+    aph_base = baselines.get("actions_per_hour", 10.0)
+    if aph > aph_base * 2:
+        ratio = aph / aph_base if aph_base else float("inf")
+        parts.append(
+            f"activity volume ({aph:.0f} actions/hr) was {ratio:.1f}x above"
+            f" typical {role} baseline (~{aph_base:.0f} actions/hr)"
+        )
+
+    # --- Breadth: unique_patients_accessed vs role baseline
+    upa = features.get("unique_patients_accessed", 0.0)
+    upa_base = baselines.get("unique_patients_accessed", 5.0)
+    if upa > upa_base * 2:
+        ratio = upa / upa_base if upa_base else float("inf")
+        parts.append(
+            f"accessed {upa:.0f} distinct patient records"
+            f" ({ratio:.1f}x the typical {role} baseline of ~{upa_base:.0f})"
+        )
+
+    # --- Temporal: off_hours_flag
+    if features.get("off_hours_flag", 0) >= 1:
+        parts.append("access occurred outside normal operating hours (10 PM–6 AM UTC)")
+
+    # --- Role integrity: cross_role_action_flag
+    if features.get("cross_role_action_flag", 0) >= 1:
+        parts.append(f"performed actions inconsistent with {role} role permissions")
+
+    # --- Rapid edits: rapid_edit_flag
+    if features.get("rapid_edit_flag", 0) >= 1:
+        parts.append("modified the same record more than 3 times within 15 minutes")
+
+    # --- Session length vs baseline
+    sdm = features.get("session_duration_minutes", 0.0)
+    sdm_base = baselines.get("session_duration_minutes", 40.0)
+    if sdm > sdm_base * 3:
+        parts.append(
+            f"session lasted {sdm:.0f} minutes"
+            f" ({sdm / sdm_base:.1f}x the typical {role} baseline of ~{sdm_base:.0f} min)"
+        )
+
+    # --- Untreated patient ratio (primarily Doctor-relevant)
+    upr = features.get("untreated_patient_ratio", 0.0)
+    if upr > 0.4:
+        parts.append(
+            f"{upr * 100:.0f}% of accessed patients had no prior appointment"
+            f" with this user"
+        )
+
+    if not parts:
+        parts = ["exhibited statistically anomalous behaviour across multiple signals"]
+
+    joined = "; ".join(parts)
+    return (
+        f"Alert — {user_name} [{role}] scored {anomaly_score:.0%} anomaly"
+        f" (rule-based explanation). Detected: {joined}."
+    )
+
+
+# ---------------------------------------------------------------------------
 # SECTION 8: Natural-language explanation generator
 # ---------------------------------------------------------------------------
 
@@ -490,6 +605,134 @@ def classify_severity(anomaly_score: float) -> str:
 
 
 # ---------------------------------------------------------------------------
+# SECTION 10a: Behavioral score persistence and trend detection
+# ---------------------------------------------------------------------------
+
+def persist_behavioral_score(
+    db: Session,
+    user_id: int,
+    score: float,
+    role: str,
+) -> BehavioralScore:
+    """
+    Write a BehavioralScore row for every computed anomaly score.
+
+    Called unconditionally from analyze_and_alert() before the alert
+    threshold gate, so sub-threshold scores are also stored.
+
+    Args:
+        db:      Database session.
+        user_id: ID of the scored user.
+        score:   Normalised anomaly score in [0, 1].
+        role:    Plain-string role name at time of scoring.
+
+    Returns:
+        The persisted BehavioralScore instance.
+    """
+    entry = BehavioralScore(
+        user_id=user_id,
+        score=score,
+        computed_at=datetime.utcnow(),
+        role=role,
+    )
+    db.add(entry)
+    db.flush()   # get entry.id without closing the transaction
+    logger.debug(
+        "BehavioralScore persisted: id=%d user_id=%d score=%.3f",
+        entry.id, user_id, score,
+    )
+    return entry
+
+
+def check_sustained_elevation(
+    db: Session,
+    user_id: int,
+    user_name: str,
+    role: str,
+) -> Optional[AnomalyAlert]:
+    """
+    Create a MEDIUM escalation alert when a user's last TREND_WINDOW scores
+    are ALL above TREND_THRESHOLD, and no such alert has already been raised
+    within the last TREND_DEDUP_DAYS days.
+
+    The 7 scores must be the 7 most-recent consecutive entries — a single
+    sub-threshold score in that window breaks the streak and suppresses the
+    alert.
+
+    Args:
+        db:        Database session.
+        user_id:   ID of the user to inspect.
+        user_name: Display name used in the alert explanation.
+        role:      Plain-string role name.
+
+    Returns:
+        A new AnomalyAlert (MEDIUM, already committed) if the trend fires,
+        None otherwise.
+    """
+    # Fetch the last TREND_WINDOW scores ordered newest-first.
+    recent_scores: List[BehavioralScore] = (
+        db.query(BehavioralScore)
+        .filter(BehavioralScore.user_id == user_id)
+        .order_by(BehavioralScore.computed_at.desc())
+        .limit(TREND_WINDOW)
+        .all()
+    )
+
+    # Need exactly TREND_WINDOW entries and every one above threshold.
+    if len(recent_scores) < TREND_WINDOW:
+        return None
+    if not all(s.score > TREND_THRESHOLD for s in recent_scores):
+        return None
+
+    # De-duplicate: skip if an escalation alert already exists in the last
+    # TREND_DEDUP_DAYS days so a perpetually-elevated user only gets one alert
+    # per rolling window.
+    dedup_cutoff = datetime.utcnow() - timedelta(days=TREND_DEDUP_DAYS)
+    existing: Optional[AnomalyAlert] = (
+        db.query(AnomalyAlert)
+        .filter(
+            AnomalyAlert.user_id == user_id,
+            AnomalyAlert.trigger_type == TRIGGER_SUSTAINED_TREND,
+            AnomalyAlert.created_at >= dedup_cutoff,
+        )
+        .first()
+    )
+    if existing:
+        logger.debug(
+            "Sustained-elevation alert suppressed for user_id=%d (dedup, existing id=%d)",
+            user_id, existing.id,
+        )
+        return None
+
+    score_values = [round(s.score, 3) for s in recent_scores]
+    explanation = (
+        f"Alert — {user_name} [{role}] triggered a sustained elevated behaviour "
+        f"escalation. The last {TREND_WINDOW} anomaly scores were all above "
+        f"{TREND_THRESHOLD:.0%}: {score_values}. "
+        f"No single score crossed the immediate-alert threshold, but the "
+        f"persistent trend indicates gradual escalation."
+    )
+
+    alert = AnomalyAlert(
+        user_id=user_id,
+        anomaly_score=max(s.score for s in recent_scores),
+        severity="MEDIUM",
+        top_features=[],
+        explanation=explanation,
+        audit_entry_id=None,
+        trigger_type=TRIGGER_SUSTAINED_TREND,
+        is_acknowledged=False,
+    )
+    db.add(alert)
+    db.flush()
+    logger.info(
+        "Sustained-elevation alert created: id=%d user_id=%d scores=%s",
+        alert.id, user_id, score_values,
+    )
+    return alert
+
+
+# ---------------------------------------------------------------------------
 # SECTION 10: Main orchestrator (background-task entry point)
 # ---------------------------------------------------------------------------
 
@@ -523,11 +766,27 @@ def analyze_and_alert(
         features = extract_features(db, user_id)
         anomaly_score = score_event(features, role, db)
 
+        # Persist every score unconditionally (sub-threshold included).
+        persist_behavioral_score(db, user_id, anomaly_score, role)
+
+        # Check for sustained elevation across the last TREND_WINDOW scores.
+        # This runs before the single-score threshold gate so it can fire even
+        # when no individual score crosses 0.50.
+        trend_alert = check_sustained_elevation(db, user_id, user.name, role)
+
         if anomaly_score < 0.50:
-            return None
+            # Commit the behavioral score (and any trend alert) then exit early.
+            db.commit()
+            return trend_alert
 
         top_features = explain_event(features, role, db)
-        explanation = generate_explanation(user.name, role, anomaly_score, top_features)
+        if top_features:
+            explanation = generate_explanation(user.name, role, anomaly_score, top_features)
+        else:
+            # SHAP unavailable (explainer failed or returned empty) — fall back to
+            # a rule-based plain-English description from raw feature values so the
+            # admin alert never displays a blank or generic explanation.
+            explanation = fallback_feature_explanation(features, role, user.name, anomaly_score)
         severity = classify_severity(anomaly_score)
 
         alert = AnomalyAlert(
@@ -537,6 +796,7 @@ def analyze_and_alert(
             top_features=top_features,
             explanation=explanation,
             audit_entry_id=audit_entry_id,
+            trigger_type=TRIGGER_SINGLE_EVENT,
             is_acknowledged=False,
         )
         db.add(alert)

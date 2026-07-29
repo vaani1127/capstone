@@ -2,6 +2,10 @@
 Anomaly alert model for ML-based behavioural anomaly detection
 """
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, Float, ForeignKey, JSON, Text
+# trigger_type values — kept as module-level constants so callers never
+# hardcode the string literals.
+TRIGGER_SINGLE_EVENT   = "single_event"
+TRIGGER_SUSTAINED_TREND = "sustained_trend"
 from sqlalchemy.orm import relationship
 
 from app.db.base import BaseModel
@@ -19,6 +23,8 @@ class AnomalyAlert(BaseModel):
         top_features: JSON list of top SHAP-attributed features [{feature, value, contribution}]
         explanation: Natural-language explanation string generated from SHAP values
         audit_entry_id: FK to audit_chain — the triggering audit block (nullable, SET NULL on delete)
+        trigger_type:   How the alert was created — "single_event" (score >= 0.50) or
+                        "sustained_trend" (7 consecutive scores > 0.35). Never NULL.
         is_acknowledged: Whether the alert has been reviewed by an admin
         acknowledged_by: FK to users — admin who acknowledged the alert
         acknowledged_at: Timestamp of acknowledgement
@@ -34,6 +40,7 @@ class AnomalyAlert(BaseModel):
     top_features = Column(JSON, nullable=False, default=list)
     explanation = Column(Text, nullable=False)
     audit_entry_id = Column(Integer, ForeignKey("audit_chain.id", ondelete="SET NULL"), nullable=True)
+    trigger_type   = Column(String(32), nullable=False, default=TRIGGER_SINGLE_EVENT, index=True)
     is_acknowledged = Column(Boolean, nullable=False, default=False, index=True)
     acknowledged_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     acknowledged_at = Column(DateTime, nullable=True)

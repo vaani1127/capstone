@@ -1,7 +1,7 @@
 """
 Appointment model for managing appointments and queue system
 """
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Enum as SQLEnum
+from sqlalchemy import Boolean, Column, Integer, String, DateTime, ForeignKey, Enum as SQLEnum
 from sqlalchemy.orm import relationship
 import enum
 
@@ -15,6 +15,7 @@ class AppointmentStatus(str, enum.Enum):
     IN_PROGRESS = "in_progress"
     COMPLETED = "completed"
     CANCELLED = "cancelled"
+    NO_SHOW = "no_show"
 
 
 class AppointmentType(str, enum.Enum):
@@ -61,6 +62,7 @@ class Appointment(BaseModel):
     )
     queue_position = Column(Integer)
     consultation_start_time = Column(DateTime)  # Track when consultation started (IN_PROGRESS)
+    no_show_at = Column(DateTime, nullable=True)  # Set when status transitions to NO_SHOW
     
     # Relationships
     patient = relationship("Patient", back_populates="appointments")

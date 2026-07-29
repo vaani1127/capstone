@@ -18,6 +18,11 @@ logger = logging.getLogger(__name__)
 # HTTP Bearer token scheme
 security = HTTPBearer()
 
+# In-memory JTI blacklist for revoked tokens.
+# TODO: replace with Redis (or another shared store) in production so that
+#       revocations are visible across all worker processes.
+BLACKLISTED_TOKENS: set[str] = set()
+
 
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
@@ -48,7 +53,17 @@ async def get_current_user(
             detail="Invalid or expired token",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
+
+    # Reject blacklisted tokens (logged-out JTIs)
+    jti: str | None = payload.get("jti")
+    if jti and jti in BLACKLISTED_TOKENS:
+        logger.warning(f"Blacklisted token JTI used: {jti}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has been revoked",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     # Verify token type
     token_type = payload.get("type")
     if token_type != "access":
@@ -84,6 +99,16 @@ async def get_current_user(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Account is deactivated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # Verify token has not been revoked (e.g. after deactivation/reactivation)
+    token_version: int = payload.get("token_version", 0)
+    if token_version != user.token_version:
+        logger.warning(f"Revoked token used by user {user.email} (ID: {user.id})")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has been revoked",
             headers={"WWW-Authenticate": "Bearer"},
         )
 

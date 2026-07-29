@@ -1,7 +1,7 @@
 """
 User model for authentication and role-based access control
 """
-from sqlalchemy import Boolean, Column, String, Enum as SQLEnum
+from sqlalchemy import Boolean, Column, Integer, String, Enum as SQLEnum
 from sqlalchemy.orm import relationship
 import enum
 
@@ -46,6 +46,8 @@ class User(BaseModel):
         index=True
     )
     is_active = Column(Boolean, nullable=False, default=True, server_default="true")
+    token_version = Column(Integer, nullable=False, default=0, server_default="0")
+    is_walk_in = Column(Boolean, nullable=False, default=False, server_default="false")
     
     # Relationships
     patient = relationship("Patient", back_populates="user", uselist=False, cascade="all, delete-orphan")

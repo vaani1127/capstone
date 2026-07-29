@@ -2,7 +2,7 @@
 Appointment service for business logic
 """
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, func
+from sqlalchemy import and_, func, text
 from datetime import datetime, timedelta
 from typing import Optional, List
 from fastapi import HTTPException, status
@@ -472,11 +472,25 @@ class AppointmentService:
         # Store doctor_id and queue_position before cancellation
         doctor_id = appointment.doctor_id
         cancelled_queue_position = appointment.queue_position
+        was_in_progress = appointment.status == AppointmentStatus.IN_PROGRESS
 
         # Update appointment status
         appointment.status = AppointmentStatus.CANCELLED
         appointment.queue_position = None
         appointment.updated_at = datetime.utcnow()
+
+        # Capture elapsed time in EMA when cancelling a consultation already in
+        # progress. Use alpha=0.05 so an interrupted session nudges the average
+        # less than a cleanly completed one.
+        if was_in_progress and appointment.consultation_start_time:
+            elapsed_seconds = (datetime.utcnow() - appointment.consultation_start_time).total_seconds()
+            elapsed_minutes = int(elapsed_seconds / 60)
+            AppointmentService.update_average_consultation_duration(
+                db=db,
+                doctor_id=doctor_id,
+                actual_duration=elapsed_minutes,
+                alpha=0.05,
+            )
 
         db.commit()
 
@@ -524,14 +538,20 @@ class AppointmentService:
     ):
         """
         Update queue positions after an appointment is cancelled.
-        
+
         All appointments with queue_position > cancelled_position are decremented by 1.
-        
-        Args:
-            db: Database session
-            doctor_id: ID of the doctor
-            cancelled_position: Queue position of cancelled appointment
+
+        A PostgreSQL advisory transaction lock keyed on doctor_id is acquired
+        before the read-modify-write so that concurrent cancellations for the
+        same doctor are serialised. The lock is held until the surrounding
+        transaction commits, preventing the lost-update race condition where
+        two concurrent requests both read the same queue positions and both
+        write decremented values, resulting in duplicate position numbers.
         """
+        # Serialise all queue renumbering for this doctor within the transaction.
+        # pg_advisory_xact_lock is released automatically at transaction end.
+        db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": doctor_id})
+
         # Get all appointments with higher queue positions
         appointments_to_update = db.query(Appointment).filter(
             and_(
@@ -544,7 +564,7 @@ class AppointmentService:
                 ])
             )
         ).all()
-        
+
         # Decrement queue positions
         for appointment in appointments_to_update:
             appointment.queue_position -= 1
@@ -727,6 +747,7 @@ class AppointmentService:
         from app.models.user import User, UserRole
         from app.core.security import get_password_hash
         import secrets
+        import uuid
         
         # Validate doctor exists
         doctor = db.query(Doctor).filter(Doctor.id == doctor_id).first()
@@ -764,11 +785,7 @@ class AppointmentService:
         if is_new_patient:
             # Generate a unique email if not provided
             if not patient_email:
-                # Use phone or generate random email
-                if patient_phone:
-                    patient_email = f"patient_{patient_phone}@walkin.healthsaathi.local"
-                else:
-                    patient_email = f"patient_{secrets.token_hex(8)}@walkin.healthsaathi.local"
+                patient_email = f"walkin_{uuid.uuid4().hex[:12]}@healthsaathi.internal"
             
             # Generate a random password for walk-in patients
             random_password = secrets.token_urlsafe(16)
@@ -779,7 +796,8 @@ class AppointmentService:
                 name=patient_name,
                 email=patient_email,
                 password_hash=password_hash,
-                role=UserRole.PATIENT
+                role=UserRole.PATIENT,
+                is_walk_in=True,
             )
             db.add(new_user)
             db.flush()  # Get user.id without committing
@@ -1033,9 +1051,9 @@ class AppointmentService:
         
         # Define valid transitions
         valid_transitions = {
-            AppointmentStatus.SCHEDULED: [AppointmentStatus.CHECKED_IN],
+            AppointmentStatus.SCHEDULED: [AppointmentStatus.CHECKED_IN, AppointmentStatus.NO_SHOW],
             AppointmentStatus.CHECKED_IN: [AppointmentStatus.IN_PROGRESS],
-            AppointmentStatus.IN_PROGRESS: [AppointmentStatus.COMPLETED]
+            AppointmentStatus.IN_PROGRESS: [AppointmentStatus.COMPLETED],
         }
         
         # Check if transition is valid
@@ -1072,14 +1090,14 @@ class AppointmentService:
             if appointment.consultation_start_time:
                 actual_duration_seconds = (datetime.utcnow() - appointment.consultation_start_time).total_seconds()
                 actual_duration_minutes = int(actual_duration_seconds / 60)
-                
+
                 # Update doctor's average consultation duration using EMA
                 AppointmentService.update_average_consultation_duration(
                     db=db,
                     doctor_id=doctor_id,
                     actual_duration=actual_duration_minutes
                 )
-            
+
             # Update queue positions for remaining appointments
             if old_queue_position:
                 AppointmentService.update_queue_positions_after_cancellation(
@@ -1087,6 +1105,12 @@ class AppointmentService:
                     doctor_id=doctor_id,
                     cancelled_position=old_queue_position
                 )
+
+        # If status is NO_SHOW, record timestamp and clear queue position.
+        # Queue is NOT renumbered — the slot simply closes naturally.
+        if new_status == AppointmentStatus.NO_SHOW:
+            appointment.no_show_at = datetime.utcnow()
+            appointment.queue_position = None
         
         db.commit()
         db.refresh(appointment)
@@ -1125,31 +1149,29 @@ class AppointmentService:
     def update_average_consultation_duration(
         db: Session,
         doctor_id: int,
-        actual_duration: int
+        actual_duration: int,
+        alpha: float = 0.2,
     ):
         """
         Update doctor's average consultation duration using exponential moving average (EMA).
-        
+
         Formula: new_average = (alpha * actual_duration) + ((1 - alpha) * old_average)
-        
+
         Args:
             db: Database session
             doctor_id: ID of the doctor
             actual_duration: Actual consultation duration in minutes
+            alpha: EMA weight for the new sample. Default 0.2 for completed
+                   consultations; pass 0.05 for non-completed exits (no_show,
+                   cancellation mid-consult) so they nudge the average less.
         """
-        # Get doctor
         doctor = db.query(Doctor).filter(Doctor.id == doctor_id).first()
         if not doctor:
             return
-        
-        # Use alpha = 0.2 (gives more weight to historical data, smooths out outliers)
-        alpha = 0.2
-        
-        # Calculate new average using EMA
+
         old_average = doctor.average_consultation_duration
         new_average = (alpha * actual_duration) + ((1 - alpha) * old_average)
-        
-        # Update doctor's average (round to nearest integer)
+
         doctor.average_consultation_duration = int(round(new_average))
-        
+
         db.commit()

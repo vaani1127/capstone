@@ -1,10 +1,17 @@
 """
 Allergy schemas for request/response validation
 """
+import bleach
 from datetime import date, datetime
 from typing import List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+
+def _strip_html(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return value
+    return bleach.clean(value, tags=[], attributes={}, strip=True)
 
 
 class AllergyCreate(BaseModel):
@@ -17,6 +24,11 @@ class AllergyCreate(BaseModel):
     )
     onset_date: Optional[date] = Field(None, description="Date allergy first appeared")
     notes: Optional[str] = Field(None, description="Free-text clinical notes")
+
+    @field_validator('reaction', 'notes', mode='before')
+    @classmethod
+    def sanitize_text(cls, value: Optional[str]) -> Optional[str]:
+        return _strip_html(value)
 
 
 class AllergyResponse(BaseModel):

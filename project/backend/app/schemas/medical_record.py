@@ -1,9 +1,16 @@
 """
 Medical record schemas for request/response validation
 """
-from pydantic import BaseModel, Field
+import bleach
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional
 from datetime import datetime
+
+
+def _strip_html(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return value
+    return bleach.clean(value, tags=[], attributes={}, strip=True)
 
 
 class ConsultationNoteCreate(BaseModel):
@@ -11,6 +18,11 @@ class ConsultationNoteCreate(BaseModel):
     appointment_id: int = Field(..., gt=0, description="ID of the appointment")
     consultation_notes: str = Field(..., min_length=1, description="Consultation notes")
     diagnosis: Optional[str] = Field(None, description="Medical diagnosis")
+
+    @field_validator('consultation_notes', 'diagnosis', mode='before')
+    @classmethod
+    def sanitize_text(cls, value: Optional[str]) -> Optional[str]:
+        return _strip_html(value)
 
 
 class ConsultationNoteResponse(BaseModel):
@@ -26,7 +38,7 @@ class ConsultationNoteResponse(BaseModel):
     parent_record_id: Optional[int]
     created_by: int
     created_at: datetime
-    
+
     class Config:
         from_attributes = True
 
@@ -39,6 +51,11 @@ class PrescriptionCreate(BaseModel):
     frequency: str = Field(..., min_length=1, description="Frequency of medication")
     duration: str = Field(..., min_length=1, description="Duration of treatment")
 
+    @field_validator('medication', 'dosage', 'frequency', 'duration', mode='before')
+    @classmethod
+    def sanitize_text(cls, value: Optional[str]) -> Optional[str]:
+        return _strip_html(value)
+
 
 class PrescriptionUpdate(BaseModel):
     """Schema for updating a prescription"""
@@ -46,6 +63,11 @@ class PrescriptionUpdate(BaseModel):
     dosage: str = Field(..., min_length=1, description="Dosage information")
     frequency: str = Field(..., min_length=1, description="Frequency of medication")
     duration: str = Field(..., min_length=1, description="Duration of treatment")
+
+    @field_validator('medication', 'dosage', 'frequency', 'duration', mode='before')
+    @classmethod
+    def sanitize_text(cls, value: Optional[str]) -> Optional[str]:
+        return _strip_html(value)
 
 
 class MedicalRecordCreate(BaseModel):
@@ -55,12 +77,22 @@ class MedicalRecordCreate(BaseModel):
     diagnosis: Optional[str] = Field(None, description="Medical diagnosis")
     prescription: Optional[str] = Field(None, description="Prescription details")
 
+    @field_validator('consultation_notes', 'diagnosis', 'prescription', mode='before')
+    @classmethod
+    def sanitize_text(cls, value: Optional[str]) -> Optional[str]:
+        return _strip_html(value)
+
 
 class MedicalRecordUpdate(BaseModel):
     """Schema for updating a medical record"""
     consultation_notes: Optional[str] = Field(None, min_length=1)
     diagnosis: Optional[str] = None
     prescription: Optional[str] = None
+
+    @field_validator('consultation_notes', 'diagnosis', 'prescription', mode='before')
+    @classmethod
+    def sanitize_text(cls, value: Optional[str]) -> Optional[str]:
+        return _strip_html(value)
 
 
 class MedicalRecordResponse(BaseModel):
@@ -79,6 +111,6 @@ class MedicalRecordResponse(BaseModel):
     created_by: int
     created_at: datetime
     is_tampered: bool = False
-    
+
     class Config:
         from_attributes = True

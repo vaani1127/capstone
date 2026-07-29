@@ -5,7 +5,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List
 
-from app.db.session import get_db
+from app.db.session import get_db, SessionLocal
 from app.models.user import User, UserRole
 from app.models.medical_record import MedicalRecord
 from app.models.appointment import Appointment
@@ -24,6 +24,7 @@ from app.schemas.medical_record import (
 from app.models.user import UserRole
 from app.models.audit_chain import AuditChain
 from app.services.blockchain_service import (
+    create_audit_entry,
     create_medical_record_audit_entry,
     verify_record_integrity,
 )
@@ -60,6 +61,25 @@ async def _trigger_anomaly_check(db, user_id: int, audit_entry_id: int):
     except Exception as e:
         import logging
         logging.getLogger(__name__).error(f"Anomaly check failed: {e}")
+
+
+async def _log_read_audit(record_id: int, record_type: str, record_data: dict, user_id: int):
+    """Write a single audit-chain entry for a read event, non-blocking via BackgroundTasks.
+
+    Opens its own session so the request's db session (already closed by the
+    time BackgroundTasks run) is never reused, avoiding a connection-pool leak.
+    """
+    db = SessionLocal()
+    try:
+        create_audit_entry(db, record_id, record_type, record_data, user_id)
+        db.commit()
+    except Exception as e:
+        logger.error(
+            "Read audit log failed — user_id=%s record_type=%s record_id=%s error=%s",
+            user_id, record_type, record_id, e,
+        )
+    finally:
+        db.close()
 
 
 def check_and_flag_tampering(db: Session, record_id: int) -> bool:
@@ -110,6 +130,7 @@ def check_and_flag_tampering(db: Session, record_id: int) -> bool:
 @router.get("/patient/{patient_id}", response_model=List[MedicalRecordResponse])
 async def get_patient_records(
     patient_id: int,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -196,7 +217,13 @@ async def get_patient_records(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have permission to view medical records"
         )
-    
+
+    # Schedule read audit entry — runs after response is sent, does not block
+    background_tasks.add_task(
+        _log_read_audit, patient_id, "patient_records_viewed",
+        {"patient_id": patient_id}, current_user.id,
+    )
+
     # Get all medical records for the patient
     # Only return the latest version of each record (highest version_number per appointment)
     # We need to find records that are not superseded by newer versions
@@ -262,6 +289,7 @@ async def get_patient_records(
 
 @router.get("/me", response_model=List[MedicalRecordResponse])
 async def get_my_medical_records(
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -305,7 +333,7 @@ async def get_my_medical_records(
         )
     
     # Reuse the existing logic by calling get_patient_records
-    return await get_patient_records(patient.id, db, current_user)
+    return await get_patient_records(patient.id, background_tasks, db, current_user)
 
 
 @router.post("/consultation-notes", response_model=ConsultationNoteResponse, status_code=status.HTTP_201_CREATED)
@@ -835,6 +863,7 @@ async def update_prescription(
 @router.get("/{record_id}/versions", response_model=List[dict])
 async def get_record_versions(
     record_id: int,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -934,7 +963,13 @@ async def get_record_versions(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have permission to view medical records"
         )
-    
+
+    # Schedule read audit entry — runs after response is sent, does not block
+    background_tasks.add_task(
+        _log_read_audit, record_id, "medical_record_versions_viewed",
+        {"record_id": record_id, "patient_id": patient_id}, current_user.id,
+    )
+
     # Get all versions of this record
     # Strategy: Find all records with the same appointment_id or linked via parent_record_id chain
     all_versions = []

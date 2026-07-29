@@ -77,6 +77,13 @@ class ApiClient {
       throw ApiException('Forbidden', statusCode: 403);
     } else if (response.statusCode == 404) {
       throw ApiException('Not found', statusCode: 404);
+    } else if (response.statusCode == 429) {
+      final retryAfter = response.headers['retry-after'];
+      final waitText = retryAfter != null ? '$retryAfter seconds' : 'a moment';
+      throw ApiException(
+        'Too many attempts. Please try again in $waitText.',
+        statusCode: 429,
+      );
     } else {
       final body = json.decode(response.body);
       final message = body['error']?['message'] ?? body['detail'] ?? 'Request failed';

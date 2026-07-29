@@ -29,4 +29,19 @@ Thumbs.db
 *.pkl
 project/backend/seed_from_csv.py
 
+# Generated synthetic datasets (large CSV files, not source)
+dataset/
+
+# Flutter / Dart build artifacts
+project/mobile/build/
+project/mobile/.dart_tool/
+project/mobile/android/.gradle/
+project/mobile/android/.kotlin/
+project/mobile/**/*.db
+.dart_tool/
+
+# Pytest cache
+.pytest_cache/
+project/backend/.pytest_cache/
+
 documentation/
