@@ -613,6 +613,10 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
         color = Colors.grey;
         label = 'Completed';
         break;
+      case 'no_show':
+        color = Colors.red;
+        label = 'No-Show';
+        break;
       default:
         color = Colors.grey;
         label = status;

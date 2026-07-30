@@ -59,5 +59,6 @@ class Appointment {
   bool get isInProgress => status == 'in_progress';
   bool get isCompleted => status == 'completed';
   bool get isCancelled => status == 'cancelled';
+  bool get isNoShow => status == 'no_show';
   bool get isWalkIn => appointmentType == 'walk_in';
 }

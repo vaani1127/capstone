@@ -215,7 +215,11 @@ class _QueueManagementScreenState extends State<QueueManagementScreen> {
           ElevatedButton(
             onPressed: () => Navigator.of(context).pop(true),
             style: ElevatedButton.styleFrom(
-              backgroundColor: newStatus == 'in_progress' ? Colors.green : Colors.blue,
+              backgroundColor: newStatus == 'in_progress'
+                  ? Colors.green
+                  : newStatus == 'no_show'
+                      ? Colors.red
+                      : Colors.blue,
               foregroundColor: Colors.white,
             ),
             child: const Text('Confirm'),
@@ -372,6 +376,10 @@ class _QueueManagementScreenState extends State<QueueManagementScreen> {
     final isFirst = queuePosition == 1;
     final isInProgress = status == 'in_progress';
     final isCheckedIn = status == 'checked_in';
+    // Backend only allows the SCHEDULED -> NO_SHOW transition
+    // (see AppointmentStatus enum / update_appointment_status endpoint),
+    // so the "Mark No-Show" action is only offered while still scheduled.
+    final isScheduled = status == 'scheduled';
 
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
@@ -503,6 +511,20 @@ class _QueueManagementScreenState extends State<QueueManagementScreen> {
                     ),
                   ),
                 ],
+                if (isScheduled) ...[
+                  const SizedBox(width: 8),
+                  OutlinedButton.icon(
+                    onPressed: _isUpdating
+                        ? null
+                        : () => _confirmStatusUpdate(appointmentId, patientName, 'no_show'),
+                    icon: const Icon(Icons.person_off, size: 18),
+                    label: const Text('Mark No-Show'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.red[700],
+                      side: BorderSide(color: Colors.red[300]!),
+                    ),
+                  ),
+                ],
               ],
             ),
           ],
@@ -536,6 +558,11 @@ class _QueueManagementScreenState extends State<QueueManagementScreen> {
         color = Colors.grey;
         label = 'Completed';
         icon = Icons.check_circle;
+        break;
+      case 'no_show':
+        color = Colors.red;
+        label = 'No-Show';
+        icon = Icons.person_off;
         break;
       default:
         color = Colors.grey;
