@@ -59,3 +59,28 @@ class AnomalyAlertListResponse(BaseModel):
     total: int
     page: int
     page_size: int
+
+
+class BehavioralScoreResponse(BaseModel):
+    """Schema for a single behavioral score data point (one per scoring event,
+    including sub-threshold scores that never became an AnomalyAlert)."""
+    id: int
+    user_id: int
+    score: float
+    computed_at: datetime
+    role: str
+
+    class Config:
+        from_attributes = True
+
+
+class BehavioralScoreTrendResponse(BaseModel):
+    """Schema for a user's behavioral score trend: the raw score series plus
+    the same sustained-trend signal the backend already uses to escalate
+    alerts (7 consecutive scores > 0.35 -see AnomalyService), so the admin
+    UI and the alerting logic never disagree about what counts as a trend."""
+    user_id: int
+    scores: List[BehavioralScoreResponse]
+    average_score: float
+    max_score: float
+    sustained_trend_flagged: bool

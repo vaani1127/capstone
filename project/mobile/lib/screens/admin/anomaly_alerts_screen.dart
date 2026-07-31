@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
+
+import 'behavioral_score_trend_screen.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:web_socket_channel/status.dart' as ws_status;
 import '../../config/app_config.dart';
@@ -358,6 +360,7 @@ class _AnomalyAlertsScreenState extends State<AnomalyAlertsScreen> {
 
   Widget _buildAlertCard(Map<String, dynamic> alert) {
     final id = alert['id'] as int? ?? 0;
+    final userId = alert['user_id'] as int?;
     final severity = alert['severity'] as String? ?? 'LOW';
     final explanation = alert['explanation'] as String? ?? '';
     final score = (alert['anomaly_score'] as num?)?.toDouble() ?? 0.0;
@@ -399,7 +402,29 @@ class _AnomalyAlertsScreenState extends State<AnomalyAlertsScreen> {
             const SizedBox(height: 10),
             // ── Explanation ─────────────────────────────────────────────────
             Text(explanation, style: const TextStyle(fontSize: 14)),
-            const SizedBox(height: 12),
+            const SizedBox(height: 8),
+            if (userId != null)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) =>
+                            BehavioralScoreTrendScreen(userId: userId),
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.show_chart, size: 16),
+                  label: const Text('View Score Trend'),
+                  style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                ),
+              ),
+            const SizedBox(height: 4),
             // ── Acknowledge / acknowledged indicator ────────────────────────
             if (!isAcknowledged)
               Align(

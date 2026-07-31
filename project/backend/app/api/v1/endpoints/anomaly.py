@@ -11,7 +11,14 @@ import logging
 from app.db.session import get_db
 from app.models.user import User, UserRole
 from app.models.anomaly_alert import AnomalyAlert
-from app.schemas.anomaly import AnomalyAlertResponse, AnomalyAlertListResponse
+from app.models.behavioral_score import BehavioralScore
+from app.schemas.anomaly import (
+    AnomalyAlertResponse,
+    AnomalyAlertListResponse,
+    BehavioralScoreResponse,
+    BehavioralScoreTrendResponse,
+)
+from app.services.anomaly_service import TREND_WINDOW, TREND_THRESHOLD
 from app.core.dependencies import require_admin
 from app.services.websocket_manager import manager
 from app.api.v1.endpoints.websocket import authenticate_websocket, get_token_from_query
@@ -168,6 +175,64 @@ async def get_anomaly_stats(
     except Exception as e:
         logger.error("Error retrieving anomaly stats: %s", e)
         raise
+
+
+@router.get("/behavioral-scores/{user_id}", response_model=BehavioralScoreTrendResponse)
+async def get_behavioral_score_trend(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+    limit: int = Query(30, ge=1, le=200, description="Max number of recent scores to return"),
+):
+    """
+    Get a user's recent behavioral score history (Admin only).
+
+    Returns the raw score series (most recent first, capped at [limit]) plus
+    the same sustained-trend signal used by AnomalyService to escalate alerts:
+    the last TREND_WINDOW (7) scores all exceeding TREND_THRESHOLD (0.35).
+    This mirrors the escalation logic exactly so the UI and the alerting
+    system are never showing different answers for "is this a trend?".
+
+    **Required Role:** Admin
+    """
+    scores = (
+        db.query(BehavioralScore)
+        .filter(BehavioralScore.user_id == user_id)
+        .order_by(BehavioralScore.computed_at.desc())
+        .limit(limit)
+        .all()
+    )
+
+    if not scores:
+        return BehavioralScoreTrendResponse(
+            user_id=user_id, scores=[], average_score=0.0,
+            max_score=0.0, sustained_trend_flagged=False,
+        )
+
+    values = [s.score for s in scores]
+    average_score = sum(values) / len(values)
+    max_score = max(values)
+
+    # Mirrors AnomalyService's sustained-trend check: the most recent
+    # TREND_WINDOW scores (chronological order) must ALL exceed TREND_THRESHOLD.
+    recent_chronological = list(reversed(values[:TREND_WINDOW]))
+    sustained_trend_flagged = (
+        len(recent_chronological) == TREND_WINDOW
+        and all(v > TREND_THRESHOLD for v in recent_chronological)
+    )
+
+    logger.info(
+        "Admin %s retrieved behavioral score trend for user_id=%d (%d scores)",
+        current_user.email, user_id, len(scores),
+    )
+
+    return BehavioralScoreTrendResponse(
+        user_id=user_id,
+        scores=scores,
+        average_score=round(average_score, 4),
+        max_score=round(max_score, 4),
+        sustained_trend_flagged=sustained_trend_flagged,
+    )
 
 
 @router.websocket("/ws/admin")
