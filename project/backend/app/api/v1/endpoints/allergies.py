@@ -7,6 +7,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user, require_doctor, require_patient, require_role
+from app.core.utils import get_patient_by_id, check_patient_access
+from app.core.crud_helpers import create_record_with_audit
 from app.db.session import get_db
 from app.models.allergy import Allergy
 from app.models.patient import Patient
@@ -41,28 +43,6 @@ def _build_response(allergy: Allergy) -> AllergyResponse:
     )
 
 
-def _assert_read_access(db: Session, current_user: User, patient_id: int) -> None:
-    """
-    Allow Doctor, Nurse, Admin unconditionally.
-    Allow Patient only for their own record.
-    Raise 403 otherwise.
-    """
-    if current_user.role in (UserRole.ADMIN, UserRole.DOCTOR, UserRole.NURSE):
-        return
-    if current_user.role == UserRole.PATIENT:
-        owns = (
-            db.query(Patient)
-            .filter(Patient.id == patient_id, Patient.user_id == current_user.id)
-            .first()
-        )
-        if owns:
-            return
-    raise HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN,
-        detail="Access denied: you may only view your own allergy records",
-    )
-
-
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -79,12 +59,7 @@ async def record_allergy(
     The operation is appended to the audit chain with
     record_type='allergy_recorded'.
     """
-    patient = db.query(Patient).filter(Patient.id == payload.patient_id).first()
-    if not patient:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Patient {payload.patient_id} not found",
-        )
+    patient = get_patient_by_id(db, payload.patient_id)
 
     allergy = Allergy(
         patient_id=payload.patient_id,
@@ -96,12 +71,9 @@ async def record_allergy(
         notes=payload.notes,
         is_active=True,
     )
-    db.add(allergy)
-    db.flush()
-
-    create_audit_entry(
+    allergy = create_record_with_audit(
         db=db,
-        record_id=allergy.id,
+        record=allergy,
         record_type="allergy_recorded",
         record_data={
             "patient_id": payload.patient_id,
@@ -112,13 +84,7 @@ async def record_allergy(
             "recorded_by": current_user.id,
         },
         user_id=current_user.id,
-    )
-
-    db.commit()
-    db.refresh(allergy)
-    logger.info(
-        "Allergy recorded: id=%d patient_id=%d allergen='%s' severity=%s by user_id=%d",
-        allergy.id, allergy.patient_id, allergy.allergen, allergy.severity, current_user.id,
+        logger_obj=logger,
     )
     return _build_response(allergy)
 
@@ -165,7 +131,7 @@ async def get_patient_allergies(
     By default only active allergies are returned.  Pass ?include_inactive=true
     to retrieve the full history including deactivated records.
     """
-    _assert_read_access(db, current_user, patient_id)
+    check_patient_access(db, current_user, patient_id)
 
     patient = db.query(Patient).filter(Patient.id == patient_id).first()
     if not patient:

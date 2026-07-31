@@ -8,6 +8,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user, require_role, require_patient
+from app.core.utils import get_patient_by_id, check_patient_access
+from app.core.crud_helpers import create_record_with_audit
 from app.db.session import get_db
 from app.models.patient import Patient
 from app.models.user import User, UserRole
@@ -58,27 +60,6 @@ def _build_response(vitals: Vitals) -> VitalsResponse:
     )
 
 
-def _assert_patient_access(db: Session, current_user: User, patient_id: int) -> None:
-    """
-    Raise 403 unless the caller is staff (Doctor/Nurse/Admin) or the patient
-    whose record is being requested.
-    """
-    if current_user.role in (UserRole.ADMIN, UserRole.DOCTOR, UserRole.NURSE):
-        return
-    if current_user.role == UserRole.PATIENT:
-        patient = (
-            db.query(Patient)
-            .filter(Patient.id == patient_id, Patient.user_id == current_user.id)
-            .first()
-        )
-        if patient:
-            return
-    raise HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN,
-        detail="Access denied: you may only view your own vitals",
-    )
-
-
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -96,12 +77,7 @@ async def record_vitals(
     provided.  The operation is appended to the audit chain with
     record_type='vitals_recorded'.
     """
-    patient = db.query(Patient).filter(Patient.id == payload.patient_id).first()
-    if not patient:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Patient {payload.patient_id} not found",
-        )
+    patient = get_patient_by_id(db, payload.patient_id)
 
     bmi = _compute_bmi(payload.weight_kg, payload.height_cm)
 
@@ -121,12 +97,9 @@ async def record_vitals(
         bmi=bmi,
         notes=payload.notes,
     )
-    db.add(vitals)
-    db.flush()
-
-    create_audit_entry(
+    vitals = create_record_with_audit(
         db=db,
-        record_id=vitals.id,
+        record=vitals,
         record_type="vitals_recorded",
         record_data={
             "patient_id": payload.patient_id,
@@ -143,13 +116,7 @@ async def record_vitals(
             "recorded_by": current_user.id,
         },
         user_id=current_user.id,
-    )
-
-    db.commit()
-    db.refresh(vitals)
-    logger.info(
-        "Vitals recorded: id=%d patient_id=%d by user_id=%d",
-        vitals.id, vitals.patient_id, current_user.id,
+        logger_obj=logger,
     )
     return _build_response(vitals)
 
@@ -194,14 +161,9 @@ async def get_patient_vitals(
     - Doctor, Nurse, Admin: any patient
     - Patient: own records only
     """
-    _assert_patient_access(db, current_user, patient_id)
+    check_patient_access(db, current_user, patient_id)
 
-    patient = db.query(Patient).filter(Patient.id == patient_id).first()
-    if not patient:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Patient {patient_id} not found",
-        )
+    patient = get_patient_by_id(db, patient_id)
 
     rows = (
         db.query(Vitals)
@@ -224,14 +186,9 @@ async def get_latest_patient_vitals(
     Access rules are the same as GET /vitals/patient/{patient_id}.
     Returns 404 if no vitals have been recorded yet.
     """
-    _assert_patient_access(db, current_user, patient_id)
+    check_patient_access(db, current_user, patient_id)
 
-    patient = db.query(Patient).filter(Patient.id == patient_id).first()
-    if not patient:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Patient {patient_id} not found",
-        )
+    patient = get_patient_by_id(db, patient_id)
 
     row = (
         db.query(Vitals)

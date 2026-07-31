@@ -12,6 +12,7 @@ from app.models.patient import Patient
 from app.models.doctor import Doctor
 from app.models.appointment import AppointmentStatus
 from app.core.dependencies import get_current_user, require_staff, require_patient, require_role
+from app.core.utils import get_patient_by_id
 from app.schemas.appointment import (
     AppointmentCreate,
     AppointmentResponse,

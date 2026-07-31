@@ -42,11 +42,7 @@ class VitalsService {
   ///
   /// Accessible by Doctor, Nurse, Admin, or the patient themselves.
   Future<List<Vitals>> getPatientVitals(int patientId) async {
-    final response = await _apiClient.get('/vitals/patient/$patientId');
-    final data = response as Map<String, dynamic>;
-    return (data['vitals'] as List)
-        .map((json) => Vitals.fromJson(json as Map<String, dynamic>))
-        .toList();
+    return _apiClient.getList('/vitals/patient/$patientId', Vitals.fromJson, listKey: 'vitals');
   }
 
   /// Return the current patient's own vitals (Patient role only).
@@ -54,11 +50,7 @@ class VitalsService {
   /// Calls GET /vitals/me so the patient app does not need to know its own
   /// patient-table ID (which differs from the user ID).
   Future<List<Vitals>> getMyVitals() async {
-    final response = await _apiClient.get('/vitals/me');
-    final data = response as Map<String, dynamic>;
-    return (data['vitals'] as List)
-        .map((json) => Vitals.fromJson(json as Map<String, dynamic>))
-        .toList();
+    return _apiClient.getList('/vitals/me', Vitals.fromJson, listKey: 'vitals');
   }
 
   /// Return the single most recent vitals row for [patientId].

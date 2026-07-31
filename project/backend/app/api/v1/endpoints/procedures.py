@@ -7,6 +7,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user, require_doctor, require_patient
+from app.core.utils import get_patient_by_id, check_patient_access
+from app.core.crud_helpers import create_record_with_audit
 from app.db.session import get_db
 from app.models.patient import Patient
 from app.models.procedure import Procedure
@@ -41,23 +43,6 @@ def _build_response(proc: Procedure) -> ProcedureResponse:
     )
 
 
-def _assert_read_access(db: Session, current_user: User, patient_id: int) -> None:
-    if current_user.role in (UserRole.ADMIN, UserRole.DOCTOR, UserRole.NURSE):
-        return
-    if current_user.role == UserRole.PATIENT:
-        owns = (
-            db.query(Patient)
-            .filter(Patient.id == patient_id, Patient.user_id == current_user.id)
-            .first()
-        )
-        if owns:
-            return
-    raise HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN,
-        detail="Access denied: you may only view your own procedure records",
-    )
-
-
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -73,12 +58,7 @@ async def record_procedure(
 
     Appends an audit chain entry with record_type='procedure_recorded'.
     """
-    patient = db.query(Patient).filter(Patient.id == payload.patient_id).first()
-    if not patient:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Patient {payload.patient_id} not found",
-        )
+    patient = get_patient_by_id(db, payload.patient_id)
 
     proc = Procedure(
         patient_id=payload.patient_id,
@@ -92,12 +72,9 @@ async def record_procedure(
         base_cost=payload.base_cost,
         notes=payload.notes,
     )
-    db.add(proc)
-    db.flush()
-
-    create_audit_entry(
+    proc = create_record_with_audit(
         db=db,
-        record_id=proc.id,
+        record=proc,
         record_type="procedure_recorded",
         record_data={
             "patient_id": payload.patient_id,
@@ -108,13 +85,7 @@ async def record_procedure(
             "recorded_by": current_user.id,
         },
         user_id=current_user.id,
-    )
-
-    db.commit()
-    db.refresh(proc)
-    logger.info(
-        "Procedure recorded: id=%d patient_id=%d by user_id=%d",
-        proc.id, proc.patient_id, current_user.id,
+        logger_obj=logger,
     )
     return _build_response(proc)
 
@@ -157,7 +128,7 @@ async def get_patient_procedures(
 
     Access: Doctor, Nurse, Admin — any patient.  Patient — own records only.
     """
-    _assert_read_access(db, current_user, patient_id)
+    check_patient_access(db, current_user, patient_id)
 
     patient = db.query(Patient).filter(Patient.id == patient_id).first()
     if not patient:

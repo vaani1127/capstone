@@ -12,6 +12,7 @@ from app.models.appointment import Appointment
 from app.models.doctor import Doctor
 from app.models.patient import Patient
 from app.core.dependencies import get_current_user, require_doctor
+from app.core.utils import get_patient_by_id
 from app.schemas.medical_record import (
     ConsultationNoteCreate,
     ConsultationNoteResponse,
@@ -21,7 +22,6 @@ from app.schemas.medical_record import (
     MedicalRecordUpdate,
     MedicalRecordResponse
 )
-from app.models.user import UserRole
 from app.models.audit_chain import AuditChain
 from app.services.blockchain_service import (
     create_audit_entry,
@@ -159,13 +159,7 @@ async def get_patient_records(
     logger.info(f"User {current_user.id} requesting medical records for patient {patient_id}")
     
     # Verify patient exists
-    patient = db.query(Patient).filter(Patient.id == patient_id).first()
-    if not patient:
-        logger.warning(f"Patient {patient_id} not found")
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Patient not found"
-        )
+    patient = get_patient_by_id(db, patient_id)
     
     # Authorization check based on user role
     if current_user.role == UserRole.PATIENT:
@@ -906,13 +900,7 @@ async def get_record_versions(
     patient_id = record.patient_id
     
     # Verify patient exists
-    patient = db.query(Patient).filter(Patient.id == patient_id).first()
-    if not patient:
-        logger.warning(f"Patient {patient_id} not found")
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Patient not found"
-        )
+    patient = get_patient_by_id(db, patient_id)
     
     if current_user.role == UserRole.PATIENT:
         # Patients can only view their own records

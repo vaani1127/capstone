@@ -205,6 +205,24 @@ class ApiClient {
     }
   }
 
+  /// Parse a list response from the API (consolidates repeated list parsing)
+  ///
+  /// Usage:
+  ///   final vitals = await apiClient.getList('/vitals/me', Vitals.fromJson, listKey: 'vitals');
+  ///   final allergies = await apiClient.getList('/allergies/me', Allergy.fromJson, listKey: 'allergies');
+  Future<List<T>> getList<T>(
+    String endpoint,
+    T Function(Map<String, dynamic>) fromJson, {
+    String listKey = 'items',
+    bool includeAuth = true,
+  }) async {
+    final response = await get(endpoint, includeAuth: includeAuth) as Map<String, dynamic>;
+    final items = (response[listKey] ?? []) as List;
+    return items
+        .map((json) => fromJson(json as Map<String, dynamic>))
+        .toList();
+  }
+
   /// Refresh the JWT token
   Future<bool> refreshAccessToken() async {
     if (_refreshToken == null) {
