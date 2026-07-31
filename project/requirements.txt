@@ -1,5 +1,0 @@
-# NOTE: The actual dependency list lives in project/backend/requirements.txt
-# (includes scikit-learn, shap, slowapi, bleach — this file was previously
-# a stale, out-of-sync duplicate missing those). Install from there:
-#
-#   pip install -r project/backend/requirements.txt
