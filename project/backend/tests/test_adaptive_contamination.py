@@ -5,18 +5,29 @@ Tests verify:
 1. compute_adaptive_contamination() function behavior
 2. Regression test: flag-OFF produces identical baseline scores
 3. Flag-ON behavior: adaptive values scale correctly with log count
+
+Run via: python -m pytest tests/test_adaptive_contamination.py -v
+Or directly: python tests/test_adaptive_contamination.py
 """
 
 import os
 import json
-import pytest
+import sys
 from datetime import datetime, timedelta
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker
+from pathlib import Path
 
 # Add backend to path
-import sys
 sys.path.insert(0, 'd:/My Workspace/capstone work/Capstone/project/backend')
+
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+try:
+    import pytest
+    HAS_PYTEST = True
+except ImportError:
+    HAS_PYTEST = False
+    pytest = None
 
 from app.db.base import Base, import_models
 from app.models.user import User
@@ -200,3 +211,59 @@ class TestAdaptiveContamination:
             # For in-range cases, expect linear interpolation
             else:
                 assert result == pytest.approx(expected_approx, rel=1e-4)
+
+
+if __name__ == "__main__":
+    """Run tests standalone (without pytest)."""
+    import traceback
+
+    db_url = TEST_DATABASE_URL
+    engine = create_engine(db_url, echo=False)
+    Session = sessionmaker(bind=engine)
+    db = Session()
+
+    test_instance = TestAdaptiveContamination()
+    tests = [
+        ("test_compute_adaptive_contamination_below_threshold", test_instance.test_compute_adaptive_contamination_below_threshold),
+        ("test_compute_adaptive_contamination_at_threshold", test_instance.test_compute_adaptive_contamination_at_threshold),
+        ("test_compute_adaptive_contamination_above_threshold", test_instance.test_compute_adaptive_contamination_above_threshold),
+        ("test_compute_adaptive_contamination_zero_logs", test_instance.test_compute_adaptive_contamination_zero_logs),
+        ("test_compute_adaptive_contamination_midpoint", test_instance.test_compute_adaptive_contamination_midpoint),
+        ("test_adaptive_values_scale_linearly", test_instance.test_adaptive_values_scale_linearly),
+        ("test_regression_flag_off_baseline_match", lambda: test_instance.test_regression_flag_off_baseline_match(db)),
+    ]
+
+    print("=" * 80)
+    print("STANDALONE TEST RUN: Feature C - Adaptive Contamination")
+    print("=" * 80)
+
+    passed = 0
+    failed = 0
+
+    for test_name, test_func in tests:
+        try:
+            test_func()
+            print(f"  ✓ {test_name}")
+            passed += 1
+        except AssertionError as e:
+            print(f"  ✗ {test_name}")
+            print(f"    Error: {e}")
+            failed += 1
+        except Exception as e:
+            print(f"  ✗ {test_name}")
+            print(f"    Exception: {e}")
+            traceback.print_exc()
+            failed += 1
+
+    db.close()
+
+    print("\n" + "=" * 80)
+    print(f"RESULTS: {passed} passed, {failed} failed out of {len(tests)} tests")
+    print("=" * 80)
+
+    if failed == 0:
+        print("\n✓ ALL TESTS PASSED")
+        sys.exit(0)
+    else:
+        print(f"\n✗ {failed} TEST(S) FAILED")
+        sys.exit(1)

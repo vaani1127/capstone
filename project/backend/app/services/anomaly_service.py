@@ -42,9 +42,15 @@ from app.services.alert_narrator import narrate_alert
 logger = logging.getLogger(__name__)
 
 # Feature C: Adaptive contamination tuning (opt-in via environment flag)
+# IMPORTANT: This flag only affects COLD-START training (Tier 3 in get_or_train_model).
+# Production systems with existing .pkl files use Tier 2 (disk load), which bypasses this flag.
+# Adaptive tuning activates only when pretrained models are missing or fail to load.
 AUTO_TUNE_CONTAMINATION = os.getenv("AUTO_TUNE_CONTAMINATION", "false").lower() in ("true", "1", "yes")
 if AUTO_TUNE_CONTAMINATION:
-    logger.warning("AUTO_TUNE_CONTAMINATION is enabled — IsolationForest contamination will adapt based on audit log volume")
+    logger.warning(
+        "AUTO_TUNE_CONTAMINATION is enabled — adaptive contamination will apply during "
+        "cold-start retraining (Tier 3) when pretrained models are unavailable"
+    )
 
 # ---------------------------------------------------------------------------
 # Persistence path: project/backend/models/{role}_isolation_forest.pkl
@@ -98,18 +104,22 @@ def compute_adaptive_contamination(
     """
     Compute adaptive contamination parameter for IsolationForest based on audit log volume.
 
-    Rationale: With few audit logs (< threshold), models have limited data to learn normal behavior,
+    SCOPE: This function is called ONLY during Tier 3 (cold-start retraining in get_or_train_model).
+    Production systems with existing .pkl files use Tier 2 (disk load), which never calls this.
+    Adaptive tuning activates only when pretrained models are missing or fail to load.
+
+    RATIONALE: With few audit logs (< threshold), models have limited data to learn normal behavior,
     so anomaly thresholds should be conservative (lower contamination = fewer anomalies flagged).
     As log volume increases, contamination ramps linearly toward the default (0.08), providing
     more sensitivity to rare behaviors once the baseline is established.
 
-    Formula (linear ramp):
+    FORMULA (linear ramp):
       if log_count < threshold:
         contamination = default_contamination * (log_count / threshold)
       else:
         contamination = default_contamination
 
-    Example: With default=0.08, threshold=500:
+    EXAMPLE: With default=0.08, threshold=500:
       - 100 logs  → contamination = 0.08 * (100/500)  = 0.016
       - 250 logs  → contamination = 0.08 * (250/500)  = 0.040
       - 500 logs  → contamination = 0.08 (reaches default)
@@ -328,6 +338,12 @@ def get_or_train_model(role: str, db: Session) -> IsolationForest:
     2. Disk .pkl in ``MODELS_DIR``  — survives restarts; pre-trained by train.py.
     3. Lazy train from audit_chain  — fallback when no .pkl exists; result is
        saved to disk so subsequent restarts skip retraining.
+
+    FEATURE C (Adaptive Contamination):
+      - AUTO_TUNE_CONTAMINATION flag is checked ONLY in Tier 3 (cold-start training)
+      - Tier 2 (disk .pkl load) executes FIRST and returns, bypassing the flag entirely
+      - In production with existing .pkl files, adaptive tuning remains dormant
+      - Flag activates only on first-run or when pretrained models fail/missing (cold-start)
 
     Training uses a 30-day audit window per user.  When fewer than 5 role-users
     exist (e.g., test environments), a minimal model is fitted on zero-vectors to
