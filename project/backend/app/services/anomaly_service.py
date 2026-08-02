@@ -17,6 +17,7 @@ Pipeline per event:
 import logging
 import math
 import json
+import os
 from collections import Counter
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -30,14 +31,20 @@ import numpy as np
 from sklearn.ensemble import IsolationForest
 import shap
 
-from app.models.anomaly_alert import AnomalyAlert, TRIGGER_SINGLE_EVENT, TRIGGER_SUSTAINED_TREND
+from app.models.anomaly_alert import AnomalyAlert, TRIGGER_SINGLE_EVENT, TRIGGER_SUSTAINED_TREND, TRIGGER_IDENTITY_DRIFT
 from app.models.audit_chain import AuditChain
 from app.models.behavioral_score import BehavioralScore
 from app.models.user import User
 from app.models.appointment import Appointment
+from app.services.alert_narrator import narrate_alert
 
 
 logger = logging.getLogger(__name__)
+
+# Feature C: Adaptive contamination tuning (opt-in via environment flag)
+AUTO_TUNE_CONTAMINATION = os.getenv("AUTO_TUNE_CONTAMINATION", "false").lower() in ("true", "1", "yes")
+if AUTO_TUNE_CONTAMINATION:
+    logger.warning("AUTO_TUNE_CONTAMINATION is enabled — IsolationForest contamination will adapt based on audit log volume")
 
 # ---------------------------------------------------------------------------
 # Persistence path: project/backend/models/{role}_isolation_forest.pkl
@@ -62,6 +69,10 @@ FEATURE_ORDER: List[str] = [
     "session_duration_minutes",
 ]
 
+# Default contamination parameter for IsolationForest (matches train.py, ablation_study.py)
+# This is the expected outlier ratio. Overridable for adaptive tuning in Feature C.
+DEFAULT_CONTAMINATION: float = 0.08
+
 # Per-role normal-behaviour baselines: mean of each continuous feature across
 # is_anomaly=0 rows, computed from the training dataset (09_audit_logs_synthetic.csv).
 # Used as reference points in the rule-based fallback explanation when SHAP is
@@ -74,6 +85,60 @@ _ROLE_BASELINES: Dict[str, Dict[str, float]] = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Adaptive contamination tuning (Feature C)
+# ---------------------------------------------------------------------------
+
+def compute_adaptive_contamination(
+    role: str,
+    log_count_last_n_days: int,
+    default_contamination: float = DEFAULT_CONTAMINATION,
+    log_count_threshold: int = 500
+) -> float:
+    """
+    Compute adaptive contamination parameter for IsolationForest based on audit log volume.
+
+    Rationale: With few audit logs (< threshold), models have limited data to learn normal behavior,
+    so anomaly thresholds should be conservative (lower contamination = fewer anomalies flagged).
+    As log volume increases, contamination ramps linearly toward the default (0.08), providing
+    more sensitivity to rare behaviors once the baseline is established.
+
+    Formula (linear ramp):
+      if log_count < threshold:
+        contamination = default_contamination * (log_count / threshold)
+      else:
+        contamination = default_contamination
+
+    Example: With default=0.08, threshold=500:
+      - 100 logs  → contamination = 0.08 * (100/500)  = 0.016
+      - 250 logs  → contamination = 0.08 * (250/500)  = 0.040
+      - 500 logs  → contamination = 0.08 (reaches default)
+      - 1000 logs → contamination = 0.08 (stays at default)
+
+    Args:
+        role: User role ("Admin", "Doctor", "Nurse", "Patient")
+        log_count_last_n_days: Number of audit logs for this role in recent window
+        default_contamination: Target contamination once threshold is reached (default 0.08)
+        log_count_threshold: Log count at which contamination reaches default (default 500)
+
+    Returns:
+        Computed contamination value, constrained to [0.001, default_contamination]
+    """
+    if log_count_last_n_days >= log_count_threshold:
+        return default_contamination
+
+    # Linear ramp from 0 to default_contamination
+    adaptive_value = default_contamination * (log_count_last_n_days / log_count_threshold)
+
+    # Constrain to minimum (avoid 0.0, which breaks IsolationForest)
+    contamination = max(0.001, adaptive_value)
+
+    if AUTO_TUNE_CONTAMINATION:
+        logger.debug(f"Adaptive contamination [{role}]: {log_count_last_n_days} logs → {contamination:.4f}")
+
+    return contamination
+
+
 # Trend-detection parameters for sustained-elevation escalation.
 # A MEDIUM alert is raised when all of the last TREND_WINDOW scores exceed
 # TREND_THRESHOLD, provided no escalation alert already exists for this user
@@ -81,6 +146,10 @@ _ROLE_BASELINES: Dict[str, Dict[str, float]] = {
 TREND_WINDOW:     int   = 7      # number of consecutive recent scores required
 TREND_THRESHOLD:  float = 0.35   # minimum score for each of those entries
 TREND_DEDUP_DAYS: int   = 7      # rolling window in which only one escalation fires
+
+# Privilege order for identity drift: only upward drift (toward higher privilege) triggers alerts
+PRIVILEGE_ORDER: List[str] = ["Patient", "Nurse", "Doctor", "Admin"]
+PRIVILEGE_INDEX: Dict[str, int] = {role: i for i, role in enumerate(PRIVILEGE_ORDER)}
 
 # ---------------------------------------------------------------------------
 # SECTION 2: Feature extraction
@@ -305,16 +374,27 @@ def get_or_train_model(role: str, db: Session) -> IsolationForest:
         feats = extract_features(db, u.id, window_minutes=60 * 24 * 30)
         feature_rows.append([feats[k] for k in FEATURE_ORDER])
 
+    # Compute contamination: adaptive if flag is on, else use default
+    if AUTO_TUNE_CONTAMINATION and len(feature_rows) > 0:
+        # Count audit logs for this role in last 30 days to inform adaptive tuning
+        cutoff_time = datetime.utcnow() - timedelta(days=30)
+        log_count_30d = db.query(func.count(AuditChain.id)).filter(
+            AuditChain.timestamp >= cutoff_time
+        ).scalar()
+        contamination = compute_adaptive_contamination(role, log_count_30d, DEFAULT_CONTAMINATION)
+    else:
+        contamination = DEFAULT_CONTAMINATION
+
     if len(feature_rows) < 5:
         # Not enough real data — initialise on repeated zero-vectors
-        model = IsolationForest(n_estimators=100, contamination=0.05, random_state=42)
+        model = IsolationForest(n_estimators=100, contamination=contamination, random_state=42)
         model.fit(_get_default_features().repeat(10, axis=0))
     else:
         feature_matrix = np.array(feature_rows, dtype=float)
         n_samples = min(256, len(feature_matrix))
         model = IsolationForest(
             n_estimators=200,
-            contamination=0.05,
+            contamination=contamination,
             random_state=42,
             max_samples=n_samples,
         )
@@ -359,6 +439,92 @@ def score_event(features: dict, role: str, db: Session) -> float:
     raw_score = model.decision_function(feature_array)[0]
     anomaly_score = float(np.clip(0.5 - raw_score, 0.0, 1.0))
     return anomaly_score
+
+
+def _get_feature_min_max(baseline_features: List[str]) -> tuple:
+    """
+    Compute min/max across all role baselines for each feature.
+    Used for normalization so Euclidean distance isn't dominated by largest-scale features.
+    """
+    feature_mins = {f: float("inf") for f in baseline_features}
+    feature_maxs = {f: float("-inf") for f in baseline_features}
+
+    for role, baseline in _ROLE_BASELINES.items():
+        for feat in baseline_features:
+            val = baseline.get(feat, 0.0)
+            feature_mins[feat] = min(feature_mins[feat], val)
+            feature_maxs[feat] = max(feature_maxs[feat], val)
+
+    return feature_mins, feature_maxs
+
+
+def _normalize_features(feature_values: List[float], features: List[str], mins: dict, maxs: dict) -> np.ndarray:
+    """
+    Min-max normalize feature values to [0, 1] using baseline min/max ranges.
+    Prevents large-magnitude features from dominating Euclidean distance.
+    """
+    normalized = []
+    for feat, val in zip(features, feature_values):
+        min_val = mins.get(feat, 0.0)
+        max_val = maxs.get(feat, 1.0)
+        range_val = max_val - min_val
+        if range_val == 0:
+            # All roles have same value for this feature; normalize to 0.5
+            normalized.append(0.5)
+        else:
+            normalized.append((val - min_val) / range_val)
+    return np.array(normalized)
+
+
+def compute_cross_role_distance(features: dict, user_role: str) -> tuple:
+    """
+    Compute normalized Euclidean distance from a feature vector to every role's baseline centroid.
+    Returns the role and distance to the nearest OTHER role (excluding the user's own role).
+
+    Uses _ROLE_BASELINES (the per-role normal-behaviour centroids) as the reference
+    points. Normalizes each feature to [0, 1] using baseline min/max to prevent
+    large-magnitude features from dominating the distance metric.
+
+    Only distances three continuous features: actions_per_hour, unique_patients_accessed,
+    session_duration_minutes (the ones stored in _ROLE_BASELINES).
+
+    Args:
+        features: Feature dict from extract_features()
+        user_role: Plain-string role name of the user whose feature vector this is
+
+    Returns:
+        Tuple (nearest_other_role: str, min_distance: float) or (None, float('inf'))
+        if no other roles exist or distance cannot be computed.
+    """
+    baseline_features = ["actions_per_hour", "unique_patients_accessed", "session_duration_minutes"]
+
+    # Compute normalization ranges from all role baselines
+    feature_mins, feature_maxs = _get_feature_min_max(baseline_features)
+
+    # Extract and normalize user's feature vector
+    user_values = [features.get(f, 0.0) for f in baseline_features]
+    user_vector = _normalize_features(user_values, baseline_features, feature_mins, feature_maxs)
+
+    min_distance = float("inf")
+    nearest_role = None
+
+    # Compute normalized distance to each other role's centroid
+    for role, baseline in _ROLE_BASELINES.items():
+        if role == user_role:
+            continue
+
+        role_values = [baseline.get(f, 0.0) for f in baseline_features]
+        role_vector = _normalize_features(role_values, baseline_features, feature_mins, feature_maxs)
+        distance = float(np.linalg.norm(user_vector - role_vector))
+
+        if distance < min_distance:
+            min_distance = distance
+            nearest_role = role
+
+    return nearest_role, min_distance
+
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -613,6 +779,9 @@ def persist_behavioral_score(
     user_id: int,
     score: float,
     role: str,
+    nearest_other_role: Optional[str] = None,
+    cross_role_distance: Optional[float] = None,
+    trigger_type: Optional[str] = None,
 ) -> BehavioralScore:
     """
     Write a BehavioralScore row for every computed anomaly score.
@@ -621,10 +790,13 @@ def persist_behavioral_score(
     threshold gate, so sub-threshold scores are also stored.
 
     Args:
-        db:      Database session.
-        user_id: ID of the scored user.
-        score:   Normalised anomaly score in [0, 1].
-        role:    Plain-string role name at time of scoring.
+        db:                    Database session.
+        user_id:               ID of the scored user.
+        score:                 Normalised anomaly score in [0, 1].
+        role:                  Plain-string role name at time of scoring.
+        nearest_other_role:    Role whose centroid the user is closest to.
+        cross_role_distance:   Distance to that role's centroid.
+        trigger_type:          Alert trigger type if escalated.
 
     Returns:
         The persisted BehavioralScore instance.
@@ -634,14 +806,173 @@ def persist_behavioral_score(
         score=score,
         computed_at=datetime.utcnow(),
         role=role,
+        nearest_other_role=nearest_other_role,
+        cross_role_distance=cross_role_distance,
+        trigger_type=trigger_type,
     )
     db.add(entry)
     db.flush()   # get entry.id without closing the transaction
     logger.debug(
-        "BehavioralScore persisted: id=%d user_id=%d score=%.3f",
-        entry.id, user_id, score,
+        "BehavioralScore persisted: id=%d user_id=%d score=%.3f nearest_other_role=%s",
+        entry.id, user_id, score, nearest_other_role,
     )
     return entry
+
+
+def check_identity_drift(
+    db: Session,
+    user_id: int,
+    user_name: str,
+    role: str,
+) -> Optional[AnomalyAlert]:
+    """
+    Detect insider-threat behavior via cross-role access drift.
+
+    Flags when a user's access pattern trends toward a higher-privilege role's
+    centroid over the last TREND_WINDOW scores. Only fires if:
+    1. The nearest_other_role has higher privilege than the user's current role
+    2. The cross_role_distance values show a downward trend (getting closer)
+    3. No identity_drift alert already exists within the last TREND_DEDUP_DAYS
+
+    Args:
+        db:        Database session.
+        user_id:   ID of the user to inspect.
+        user_name: Display name used in the alert explanation.
+        role:      Plain-string role name of the user.
+
+    Returns:
+        A new AnomalyAlert (MEDIUM, already committed) if drift is detected,
+        None otherwise.
+    """
+    recent_scores: List[BehavioralScore] = (
+        db.query(BehavioralScore)
+        .filter(BehavioralScore.user_id == user_id)
+        .order_by(BehavioralScore.computed_at.desc())
+        .limit(TREND_WINDOW)
+        .all()
+    )
+
+    # Need enough scores to detect a trend
+    if len(recent_scores) < TREND_WINDOW:
+        return None
+
+    # Extract nearest_other_role from the most recent score
+    most_recent = recent_scores[0]
+    if not most_recent.nearest_other_role:
+        return None
+
+    nearest_role = most_recent.nearest_other_role
+
+    # Only flag if drifting toward higher privilege
+    user_privilege = PRIVILEGE_INDEX.get(role, -1)
+    nearest_privilege = PRIVILEGE_INDEX.get(nearest_role, -1)
+    if nearest_privilege <= user_privilege:
+        return None
+
+    # Check for downward trend in cross_role_distance across the last TREND_WINDOW scores
+    distances = [s.cross_role_distance for s in reversed(recent_scores)]
+    if not all(d is not None for d in distances):
+        return None
+
+    # Simple trend check: compare first vs last (oldest vs newest)
+    # If distance is decreasing (drifting closer), flag it
+    if distances[-1] >= distances[0]:  # -1 is most recent; trend not downward
+        return None
+
+    # De-duplicate: skip if an identity_drift alert already exists in the last
+    # TREND_DEDUP_DAYS days
+    dedup_cutoff = datetime.utcnow() - timedelta(days=TREND_DEDUP_DAYS)
+    existing: Optional[AnomalyAlert] = (
+        db.query(AnomalyAlert)
+        .filter(
+            AnomalyAlert.user_id == user_id,
+            AnomalyAlert.trigger_type == TRIGGER_IDENTITY_DRIFT,
+            AnomalyAlert.created_at >= dedup_cutoff,
+        )
+        .first()
+    )
+    if existing:
+        logger.debug(
+            "Identity-drift alert suppressed for user_id=%d (dedup, existing id=%d)",
+            user_id, existing.id,
+        )
+        return None
+
+    distance_values = [round(d, 3) for d in distances]
+
+    # Scale severity based on privilege gap (how many levels up) and drift magnitude
+    privilege_gap = nearest_privilege - user_privilege
+    current_distance = distance_values[-1]  # Most recent distance (smallest = closest)
+
+    # Severity increases with:
+    # 1. Larger privilege gap (Nurse→Admin is worse than Nurse→Doctor)
+    # 2. Smaller distance to target role (getting closer = worse)
+    if privilege_gap >= 2:
+        # Drifting 2+ levels up (e.g., Nurse→Admin, Patient→Doctor) = HIGH risk
+        severity = "HIGH"
+    elif privilege_gap == 1 and current_distance < 10.0:
+        # Drifting 1 level up AND very close to target = HIGH risk
+        severity = "HIGH"
+    elif privilege_gap == 1:
+        # Drifting 1 level up = MEDIUM risk
+        severity = "MEDIUM"
+    else:
+        # Should not happen (filtered earlier) but fallback
+        severity = "MEDIUM"
+
+    # Compute drift importance score (not SHAP, but a derived importance metric)
+    # Based on: (1) trend strength (how much distance decreased) and (2) proximity to target
+    distance_trend = distances[0] - distances[-1]  # How much closer (positive = drifting closer)
+    max_possible_trend = distances[0]  # Maximum possible decrease
+    trend_strength = (distance_trend / max_possible_trend) if max_possible_trend > 0 else 0
+
+    # Normalize proximity: inverse of distance (closer = higher importance)
+    proximity_importance = max(0, min(1, (10.0 - current_distance) / 10.0)) if current_distance < 10 else 0
+
+    # Final importance: weighted combination of trend strength and proximity
+    drift_importance = (0.6 * trend_strength + 0.4 * proximity_importance)
+
+    explanation = (
+        f"Alert — {user_name} [{role}] triggered an identity drift escalation. "
+        f"Access pattern trending toward {nearest_role} role (privilege gap: +{privilege_gap}). "
+        f"Cross-role distances trending down (closer): {distance_values}. "
+        f"This may indicate an insider attempting to escalate privilege or access."
+    )
+
+    top_features = [{"feature": "cross_role_drift", "value": current_distance, "shap": round(drift_importance, 3)}]
+    narrative = narrate_alert(
+        trigger_type=TRIGGER_IDENTITY_DRIFT,
+        top_features=top_features,
+        user_name=user_name,
+        user_role=role,
+        extra_context={
+            "target_role": nearest_role,
+            "privilege_gap": privilege_gap,
+            "initial_distance": distances[0],
+            "current_distance": current_distance,
+            "importance": drift_importance,
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+    )
+
+    alert = AnomalyAlert(
+        user_id=user_id,
+        anomaly_score=max(s.score for s in recent_scores),
+        severity=severity,
+        top_features=top_features,
+        explanation=explanation,
+        narrative=narrative,
+        audit_entry_id=None,
+        trigger_type=TRIGGER_IDENTITY_DRIFT,
+        is_acknowledged=False,
+    )
+    db.add(alert)
+    db.flush()
+    logger.info(
+        "Identity-drift alert created: id=%d user_id=%d nearest_role=%s distances=%s",
+        alert.id, user_id, nearest_role, distance_values,
+    )
+    return alert
 
 
 def check_sustained_elevation(
@@ -713,12 +1044,24 @@ def check_sustained_elevation(
         f"persistent trend indicates gradual escalation."
     )
 
+    narrative = narrate_alert(
+        trigger_type=TRIGGER_SUSTAINED_TREND,
+        top_features=[],
+        user_name=user_name,
+        user_role=role,
+        extra_context={
+            "score_count": len(score_values),
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+    )
+
     alert = AnomalyAlert(
         user_id=user_id,
         anomaly_score=max(s.score for s in recent_scores),
         severity="MEDIUM",
         top_features=[],
         explanation=explanation,
+        narrative=narrative,
         audit_entry_id=None,
         trigger_type=TRIGGER_SUSTAINED_TREND,
         is_acknowledged=False,
@@ -753,7 +1096,8 @@ def analyze_and_alert(
         audit_entry_id: ID of the audit_chain row that triggered this call
 
     Returns:
-        AnomalyAlert if the score exceeded the 0.50 threshold, None otherwise.
+        AnomalyAlert if the score exceeded the 0.50 threshold or a trend/drift
+        alert was triggered, None otherwise.
     """
     try:
         user = db.query(User).filter(User.id == user_id).first()
@@ -766,8 +1110,18 @@ def analyze_and_alert(
         features = extract_features(db, user_id)
         anomaly_score = score_event(features, role, db)
 
+        # Compute cross-role distance for identity drift detection
+        nearest_other_role, cross_role_distance = compute_cross_role_distance(features, role)
+
         # Persist every score unconditionally (sub-threshold included).
-        persist_behavioral_score(db, user_id, anomaly_score, role)
+        persist_behavioral_score(
+            db, user_id, anomaly_score, role,
+            nearest_other_role=nearest_other_role,
+            cross_role_distance=cross_role_distance,
+        )
+
+        # Check for identity drift (cross-role behavioral pattern trending toward higher privilege)
+        drift_alert = check_identity_drift(db, user_id, user.name, role)
 
         # Check for sustained elevation across the last TREND_WINDOW scores.
         # This runs before the single-score threshold gate so it can fire even
@@ -775,9 +1129,9 @@ def analyze_and_alert(
         trend_alert = check_sustained_elevation(db, user_id, user.name, role)
 
         if anomaly_score < 0.50:
-            # Commit the behavioral score (and any trend alert) then exit early.
+            # Commit the behavioral score (and any trend/drift alerts) then exit early.
             db.commit()
-            return trend_alert
+            return drift_alert or trend_alert
 
         top_features = explain_event(features, role, db)
         if top_features:
@@ -789,12 +1143,24 @@ def analyze_and_alert(
             explanation = fallback_feature_explanation(features, role, user.name, anomaly_score)
         severity = classify_severity(anomaly_score)
 
+        narrative = narrate_alert(
+            trigger_type=TRIGGER_SINGLE_EVENT,
+            top_features=top_features if top_features else [],
+            user_name=user.name,
+            user_role=role,
+            extra_context={
+                "score": anomaly_score,
+                "timestamp": datetime.utcnow().isoformat(),
+            }
+        )
+
         alert = AnomalyAlert(
             user_id=user_id,
             anomaly_score=anomaly_score,
             severity=severity,
             top_features=top_features,
             explanation=explanation,
+            narrative=narrative,
             audit_entry_id=audit_entry_id,
             trigger_type=TRIGGER_SINGLE_EVENT,
             is_acknowledged=False,
