@@ -48,6 +48,8 @@ class AnomalyAlertResponse(AnomalyAlertBase):
     acknowledged_by: Optional[int] = None
     acknowledged_at: Optional[datetime] = None
     created_at: datetime
+    trigger_type: str
+    narrative: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -69,6 +71,9 @@ class BehavioralScoreResponse(BaseModel):
     score: float
     computed_at: datetime
     role: str
+    nearest_other_role: Optional[str] = None
+    cross_role_distance: Optional[float] = None
+    trigger_type: Optional[str] = None
 
     class Config:
         from_attributes = True

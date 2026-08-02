@@ -11,9 +11,14 @@ from app.core.config import settings
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify a password against its hash"""
-    # Bcrypt has a 72-byte limit, truncate to match hashing behavior
-    password_bytes = plain_password.encode('utf-8')[:72]
-    return bcrypt.checkpw(password_bytes, hashed_password.encode('utf-8'))
+    try:
+        # Bcrypt has a 72-byte limit, truncate to match hashing behavior
+        password_bytes = plain_password.encode('utf-8')[:72]
+        return bcrypt.checkpw(password_bytes, hashed_password.encode('utf-8'))
+    except (ValueError, TypeError):
+        # Invalid hash format (e.g., malformed or test data) returns False
+        # This prevents bcrypt.checkpw() exceptions from leaking as 500 errors
+        return False
 
 
 def get_password_hash(password: str) -> str:

@@ -19,18 +19,24 @@ class BehavioralScore(BaseModel):
     ones.  This enables trend detection over rolling windows.
 
     Attributes:
-        user_id:     FK to users — the scored user.
-        score:       Normalised anomaly score in [0, 1].
-        computed_at: UTC timestamp of when the score was computed.
-        role:        Plain-string role at time of scoring ("Doctor", etc.).
+        user_id:               FK to users — the scored user.
+        score:                 Normalised anomaly score in [0, 1].
+        computed_at:           UTC timestamp of when the score was computed.
+        role:                  Plain-string role at time of scoring ("Doctor", etc.).
+        nearest_other_role:    Role whose centroid the user is closest to (other than own role).
+        cross_role_distance:   Euclidean distance to that other role's centroid.
+        trigger_type:          Alert trigger type if escalated ("single_event", "sustained_trend", "identity_drift").
     """
     __tablename__ = "behavioral_scores"
 
-    user_id     = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"),
-                         nullable=False, index=True)
-    score       = Column(Float, nullable=False)
-    computed_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
-    role        = Column(String(32), nullable=False)
+    user_id               = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"),
+                                   nullable=False, index=True)
+    score                 = Column(Float, nullable=False)
+    computed_at           = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    role                  = Column(String(32), nullable=False)
+    nearest_other_role    = Column(String(32), nullable=True, index=True)
+    cross_role_distance   = Column(Float, nullable=True)
+    trigger_type          = Column(String(32), nullable=True)
 
     user = relationship("User", foreign_keys=[user_id])
 

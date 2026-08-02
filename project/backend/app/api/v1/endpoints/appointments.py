@@ -41,7 +41,9 @@ async def _trigger_anomaly_check(db, user_id: int, audit_entry_id: int):
                 "user_id": alert.user_id,
                 "anomaly_score": float(alert.anomaly_score),
                 "explanation": alert.explanation,
+                "narrative": alert.narrative,
                 "top_features": alert.top_features,
+                "trigger_type": alert.trigger_type,
                 "timestamp": alert.created_at.isoformat()
             }
             import asyncio

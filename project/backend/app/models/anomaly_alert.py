@@ -6,6 +6,7 @@ from sqlalchemy import Column, Integer, String, Boolean, DateTime, Float, Foreig
 # hardcode the string literals.
 TRIGGER_SINGLE_EVENT   = "single_event"
 TRIGGER_SUSTAINED_TREND = "sustained_trend"
+TRIGGER_IDENTITY_DRIFT = "identity_drift"
 from sqlalchemy.orm import relationship
 
 from app.db.base import BaseModel
@@ -39,6 +40,7 @@ class AnomalyAlert(BaseModel):
     severity = Column(String(10), nullable=False, index=True)
     top_features = Column(JSON, nullable=False, default=list)
     explanation = Column(Text, nullable=False)
+    narrative = Column(Text, nullable=True)
     audit_entry_id = Column(Integer, ForeignKey("audit_chain.id", ondelete="SET NULL"), nullable=True)
     trigger_type   = Column(String(32), nullable=False, default=TRIGGER_SINGLE_EVENT, index=True)
     is_acknowledged = Column(Boolean, nullable=False, default=False, index=True)
