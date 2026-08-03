@@ -26,7 +26,8 @@ export default function LandingPage() {
     window.addEventListener('beforeinstallprompt', handler)
     window.addEventListener('appinstalled', appInstalledHandler)
 
-    if (window.navigator.standalone === true) {
+    // Check if already installed (PWA mode)
+    if ((navigator as any).standalone === true || window.matchMedia('(display-mode: standalone)').matches) {
       setIsInstalled(true)
     }
 
@@ -51,14 +52,12 @@ export default function LandingPage() {
   return (
     <div className="landing-container">
       <div className="landing-content">
-        {/* Header */}
         <div className="landing-header">
           <div className="app-icon">H</div>
           <h1>HealthSaathi</h1>
           <p className="tagline">Hospital Management System</p>
         </div>
 
-        {/* Features */}
         <div className="features">
           <div className="feature-item">
             <div className="feature-icon">👥</div>
@@ -97,7 +96,6 @@ export default function LandingPage() {
           </div>
         </div>
 
-        {/* Installation Section */}
         <div className="installation-section">
           {showInstallButton && !isInstalled && (
             <>
@@ -123,12 +121,10 @@ export default function LandingPage() {
           )}
         </div>
 
-        {/* Action Button */}
         <a href="/login" className="continue-button">
           Continue to App →
         </a>
 
-        {/* Footer */}
         <div className="landing-footer">
           <p>A secure Hospital Management System for clinics</p>
           <p className="version">HealthSaathi v1.0.0</p>
