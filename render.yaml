@@ -1,15 +1,11 @@
 services:
   - type: web
     name: healthsaathi-backend
-    env: python
+    env: docker
     plan: free
-    pythonVersion: 3.11
 
-    # Build configuration
-    buildCommand: pip install -r project/backend/requirements.txt && cd project/backend && alembic upgrade head
-
-    # Start command
-    startCommand: cd project/backend && uvicorn app.main:app --host 0.0.0.0 --port 10000
+    # Dockerfile configuration
+    dockerfile: ./Dockerfile
 
     # Environment variables (replace with your Neon database URL)
     envVars:
@@ -27,3 +23,5 @@ services:
         value: "0.5"
       - key: LOG_LEVEL
         value: INFO
+      - key: PORT
+        value: "10000"
