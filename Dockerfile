@@ -13,8 +13,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY project/backend/app ./app
-COPY project/backend/alembic ./alembic
-COPY project/backend/alembic.ini ./
+COPY project/alembic ./alembic
+COPY project/alembic.ini ./
 
 # Set environment
 ENV PYTHONUNBUFFERED=1
