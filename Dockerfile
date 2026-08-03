@@ -13,6 +13,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY project/backend/app ./app
+COPY project/backend/init_db.py ./
 COPY project/alembic ./alembic
 COPY project/alembic.ini ./
 
@@ -27,5 +28,5 @@ EXPOSE 10000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD curl -f http://localhost:${PORT}/ || exit 1
 
-# Run migrations and start server
-CMD sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port ${PORT}"
+# Initialize database, then start server
+CMD sh -c "python init_db.py && uvicorn app.main:app --host 0.0.0.0 --port ${PORT}"
