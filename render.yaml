@@ -3,26 +3,20 @@ services:
     name: healthsaathi-backend
     env: python
     plan: free
+    pythonVersion: 3.11
 
     # Build configuration
-    buildCommand: |
-      cd project/backend
-      pip install -r requirements.txt
-      alembic upgrade head
+    buildCommand: pip install -r project/backend/requirements.txt && cd project/backend && alembic upgrade head
 
     # Start command
-    startCommand: |
-      cd project/backend
-      uvicorn app.main:app --host 0.0.0.0 --port 10000
+    startCommand: cd project/backend && uvicorn app.main:app --host 0.0.0.0 --port 10000
 
     # Environment variables (replace with your Neon database URL)
     envVars:
       - key: DATABASE_URL
-        fromDatabase:
-          name: healthsaathi-neon
-          property: connectionString
+        value: postgresql://your-neon-connection-string-here
       - key: JWT_SECRET
-        value: your-secret-key-min-32-chars-here-change-this
+        value: your-secret-key-min-32-chars-here-change-this-123456789
       - key: JWT_ALGORITHM
         value: HS256
       - key: ENVIRONMENT
