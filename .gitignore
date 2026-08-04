@@ -45,3 +45,6 @@ project/mobile/**/*.db
 project/backend/.pytest_cache/
 
 documentation/
+
+# Temporary project folders
+tasks/
