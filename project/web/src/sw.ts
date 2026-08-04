@@ -1,51 +1,44 @@
 /// <reference lib="webworker" />
-
 declare const self: ServiceWorkerGlobalScope;
 
-// Vite PWA injection point
-declare global {
-  interface ServiceWorkerGlobalScope {
-    __WB_MANIFEST: unknown;
-  }
-}
-
-// eslint-disable-next-line @typescript-eslint/no-unused-expressions
-self.__WB_MANIFEST;
+// Vite PWA injection point - eslint-disable-next-line @typescript-eslint/no-unused-expressions
+declare const __WB_MANIFEST: unknown;
 
 self.addEventListener('install', () => {
   self.skipWaiting();
 });
 
-self.addEventListener('activate', (event: ExtendableEvent) => {
-  event.waitUntil(self.clients.claim());
+self.addEventListener('activate', (event: unknown) => {
+  (event as ExtendableEvent).waitUntil(self.clients.claim());
 });
 
-self.addEventListener('push', (event: PushEvent) => {
-  if (!event.data) return;
+self.addEventListener('push', (event: unknown) => {
+  const pushEvent = event as PushEvent;
+  if (!pushEvent.data) return;
 
-  let payload: { title?: string; body?: string; tag?: string } = {};
+  let payload: Record<string, unknown> = {};
   try {
-    payload = event.data.json() as { title?: string; body?: string; tag?: string };
+    payload = pushEvent.data.json() as Record<string, unknown>;
   } catch {
-    payload = { title: 'HealthSaathi', body: event.data.text() };
+    payload = { title: 'HealthSaathi', body: pushEvent.data.text() };
   }
 
-  const title = payload.title || 'HealthSaathi';
-  const options: NotificationOptions = {
-    body: payload.body || '',
-    tag: payload.tag,
+  const title = (payload.title as string) || 'HealthSaathi';
+  const notificationOptions = {
+    body: (payload.body as string) || '',
+    tag: (payload.tag as string) || undefined,
     icon: '/icons/icon-192.png',
     badge: '/icons/icon-192.png',
-    vibrate: [200, 100, 200],
     requireInteraction: false,
   };
 
-  event.waitUntil(self.registration.showNotification(title, options));
+  pushEvent.waitUntil(self.registration.showNotification(title, notificationOptions));
 });
 
-self.addEventListener('notificationclick', (event: NotificationEvent) => {
-  event.notification.close();
-  event.waitUntil(
+self.addEventListener('notificationclick', (event: unknown) => {
+  const notifEvent = event as NotificationEvent;
+  notifEvent.notification.close();
+  notifEvent.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
       if (clients.length > 0) {
         return clients[0].focus();
