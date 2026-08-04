@@ -99,24 +99,23 @@ export default function LandingPage() {
         <div className="installation-section">
           {showInstallButton && !isInstalled && (
             <>
-              <p className="install-prompt">Install HealthSaathi on your phone for easy access</p>
+              <p className="install-prompt">Get HealthSaathi on your phone</p>
               <button
                 className="install-button"
                 onClick={handleInstall}
               >
-                📲 Install on Home Screen
+                📲 Install App
               </button>
-              <p className="install-hint">Click above to install the app, or continue in browser</p>
             </>
           )}
 
           {isInstalled && (
-            <p className="installed-message">✅ App installed successfully!</p>
+            <p className="installed-message">✅ App installed! Close this screen and continue on the app</p>
           )}
 
           {!showInstallButton && !isInstalled && (
             <p className="browser-hint">
-              💡 Use "Add to Home Screen" from your browser menu to install
+              💡 Open this link on your mobile browser to install
             </p>
           )}
         </div>
