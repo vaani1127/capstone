@@ -19,14 +19,7 @@ COPY project/alembic.ini ./
 
 # Set environment
 ENV PYTHONUNBUFFERED=1
-ENV PORT=10000
 
-# Expose port
-EXPOSE 10000
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD curl -f http://localhost:${PORT}/ || exit 1
-
-# Initialize database, then start server
-CMD sh -c "python init_db.py && uvicorn app.main:app --host 0.0.0.0 --port ${PORT}"
+# Render will set PORT env var automatically (default 10000)
+# Initialize database and start server
+CMD sh -c "python init_db.py && uvicorn app.main:app --host 0.0.0.0 --port 10000"
