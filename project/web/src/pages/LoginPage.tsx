@@ -12,6 +12,19 @@ export default function LoginPage() {
   const navigate = useNavigate();
   const { login } = useAuthStore();
 
+  const demoCredentials = [
+    { role: 'Admin', email: 'admin@clinic.local', password: 'Admin123!' },
+    { role: 'Doctor', email: 'doctor@clinic.local', password: 'Doctor123!' },
+    { role: 'Nurse', email: 'nurse@clinic.local', password: 'Nurse123!' },
+    { role: 'Patient', email: 'patient@clinic.local', password: 'Patient123!' },
+  ];
+
+  const handleDemoLogin = (cred: typeof demoCredentials[0]) => {
+    setEmail(cred.email);
+    setPassword(cred.password);
+    setError('');
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -67,9 +80,22 @@ export default function LoginPage() {
           </button>
         </form>
 
-        <p className="test-credentials">
-          Test credentials available in backend documentation
-        </p>
+        <div className="demo-section">
+          <p className="demo-label">Quick Demo Login:</p>
+          <div className="demo-buttons">
+            {demoCredentials.map((cred) => (
+              <button
+                key={cred.role}
+                type="button"
+                className="demo-button"
+                onClick={() => handleDemoLogin(cred)}
+                disabled={loading}
+              >
+                {cred.role}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
     </div>
   );
