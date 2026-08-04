@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useAuthStore } from '@/store/auth';
 import { wsService } from '@/services/websocket';
@@ -13,6 +13,14 @@ import './App.css';
 
 function App() {
   const { isAuthenticated, user } = useAuthStore();
+  const [isStandalone, setIsStandalone] = useState(false);
+
+  useEffect(() => {
+    // Detect if app is running in standalone mode (opened from home screen)
+    const standalone = window.matchMedia('(display-mode: standalone)').matches ||
+                      (window.navigator as any).standalone === true;
+    setIsStandalone(standalone);
+  }, []);
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -30,7 +38,8 @@ function App() {
     return (
       <BrowserRouter>
         <Routes>
-          <Route path="/" element={<LandingPage />} />
+          {/* Skip landing page if app is running in standalone mode (installed app) */}
+          <Route path="/" element={isStandalone ? <LoginPage /> : <LandingPage />} />
           <Route path="/login" element={<LoginPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
