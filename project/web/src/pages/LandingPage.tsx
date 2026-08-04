@@ -12,13 +12,17 @@ export default function LandingPage() {
   const [isInstalled, setIsInstalled] = useState(false)
 
   useEffect(() => {
+    console.log('LandingPage mounted - checking for install capability')
+
     const handler = (e: Event) => {
+      console.log('beforeinstallprompt event fired')
       e.preventDefault()
       setDeferredPrompt(e as BeforeInstallPromptEvent)
       setShowInstallButton(true)
     }
 
     const appInstalledHandler = () => {
+      console.log('appinstalled event fired')
       setIsInstalled(true)
       setShowInstallButton(false)
     }
@@ -28,7 +32,10 @@ export default function LandingPage() {
 
     // Check if already installed (PWA mode)
     if ((navigator as any).standalone === true || window.matchMedia('(display-mode: standalone)').matches) {
+      console.log('App is already installed (standalone mode detected)')
       setIsInstalled(true)
+    } else {
+      console.log('App not installed yet - waiting for install prompt')
     }
 
     return () => {
@@ -38,14 +45,28 @@ export default function LandingPage() {
   }, [])
 
   const handleInstall = async () => {
-    if (!deferredPrompt) return
+    console.log('Install button clicked. deferredPrompt:', deferredPrompt)
 
-    deferredPrompt.prompt()
-    const { outcome } = await deferredPrompt.userChoice
+    if (!deferredPrompt) {
+      console.log('No deferredPrompt available')
+      return
+    }
 
-    if (outcome === 'accepted') {
-      setDeferredPrompt(null)
-      setShowInstallButton(false)
+    try {
+      console.log('Showing install prompt...')
+      await deferredPrompt.prompt()
+      const { outcome } = await deferredPrompt.userChoice
+      console.log('Install prompt outcome:', outcome)
+
+      if (outcome === 'accepted') {
+        console.log('User accepted installation')
+        setDeferredPrompt(null)
+        setShowInstallButton(false)
+      } else {
+        console.log('User dismissed installation')
+      }
+    } catch (error) {
+      console.error('Error during install:', error)
     }
   }
 
