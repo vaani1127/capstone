@@ -165,6 +165,11 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
     )
 
 
+# Health check endpoint for deployment
+@app.get("/health")
+async def health_check():
+    return {"status": "ok"}
+
 # Include API router
 app.include_router(api_router, prefix="/api/v1")
 
