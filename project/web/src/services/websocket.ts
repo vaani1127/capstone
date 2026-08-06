@@ -17,7 +17,8 @@ class WebSocketService {
   private isIntentionallyClosed = false;
 
   constructor() {
-    const baseUrl = process.env.VITE_WS_URL || 'ws://localhost:8000';
+    const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+    const baseUrl = apiUrl.replace(/^http/, 'ws');
     this.url = `${baseUrl}/ws`;
   }
 
