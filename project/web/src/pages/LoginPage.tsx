@@ -13,10 +13,10 @@ export default function LoginPage() {
   const { login } = useAuthStore();
 
   const demoCredentials = [
-    { role: 'Admin', email: 'admin@clinic.local', password: 'Admin123!' },
-    { role: 'Doctor', email: 'doctor@clinic.local', password: 'Doctor123!' },
-    { role: 'Nurse', email: 'nurse@clinic.local', password: 'Nurse123!' },
-    { role: 'Patient', email: 'patient@clinic.local', password: 'Patient123!' },
+    { role: 'Admin', email: 'admin@healthsaathi.com', password: 'Admin123!' },
+    { role: 'Doctor', email: 'rajesh.kumar@healthsaathi.com', password: 'Doctor123!' },
+    { role: 'Nurse', email: 'anjali@healthsaathi.com', password: 'Nurse123!' },
+    { role: 'Patient', email: 'rahul.verma@example.com', password: 'Patient123!' },
   ];
 
   const handleDemoLogin = (cred: typeof demoCredentials[0]) => {
