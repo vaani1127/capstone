@@ -22,8 +22,8 @@ ENV PYTHONUNBUFFERED=1
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD curl -f http://localhost:10000/health || exit 1
+    CMD curl -f http://localhost:${PORT:-10000}/health || exit 1
 
-# Render will set PORT env var automatically (default 10000)
+# Render sets PORT env var at runtime — bind to whatever it provides
 # Initialize database and start server
-CMD sh -c "python init_db.py && uvicorn app.main:app --host 0.0.0.0 --port 10000"
+CMD sh -c "python init_db.py && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-10000}"
