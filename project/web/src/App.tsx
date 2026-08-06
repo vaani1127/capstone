@@ -12,8 +12,9 @@ import PatientDashboard from '@/pages/PatientDashboard';
 import './App.css';
 
 function App() {
-  const { isAuthenticated, user } = useAuthStore();
+  const { isAuthenticated, user, fetchCurrentUser } = useAuthStore();
   const [isStandalone, setIsStandalone] = useState(false);
+  const [userLoading, setUserLoading] = useState(true);
 
   useEffect(() => {
     // Detect if app is running in standalone mode (opened from home screen)
@@ -21,6 +22,19 @@ function App() {
                       (window.navigator as any).standalone === true;
     setIsStandalone(standalone);
   }, []);
+
+  useEffect(() => {
+    // On page load, the token is restored from localStorage but the user
+    // object isn't — fetch it so role-based routing has something to read.
+    if (isAuthenticated && !user) {
+      fetchCurrentUser()
+        .catch(() => {})
+        .finally(() => setUserLoading(false));
+    } else {
+      setUserLoading(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated]);
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -33,6 +47,10 @@ function App() {
       };
     }
   }, [isAuthenticated]);
+
+  if (isAuthenticated && userLoading) {
+    return null;
+  }
 
   if (!isAuthenticated) {
     return (

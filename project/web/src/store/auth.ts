@@ -22,6 +22,7 @@ export interface AuthState {
   logout: () => void;
   refreshToken: () => Promise<void>;
   setUser: (user: User | null) => void;
+  fetchCurrentUser: () => Promise<void>;
 }
 
 export const useAuthStore = create<AuthState>((set, get) => ({
@@ -91,4 +92,14 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   setUser: (user) => set({ user }),
+
+  fetchCurrentUser: async () => {
+    try {
+      const user = await apiClient.get<User>('/users/me');
+      set({ user });
+    } catch (error) {
+      get().logout();
+      throw error;
+    }
+  },
 }));
